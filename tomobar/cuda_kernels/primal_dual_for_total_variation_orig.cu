@@ -1,190 +1,119 @@
 /************************************************/
+/*****************2D modules*********************/
+/************************************************/
+extern "C" __global__ void dualPD_kernel(float *U, float *P1, float *P2, float sigma, int N, int M)
+{
+
+  // calculate each thread global index
+  const int xIndex = blockIdx.x * blockDim.x + threadIdx.x;
+  const int yIndex = blockIdx.y * blockDim.y + threadIdx.y;
+
+  int index = xIndex + N * yIndex;
+
+  if ((xIndex < N) && (yIndex < M))
+  {
+    if (xIndex == N - 1)
+      P1[index] += sigma * (U[(xIndex - 1) + N * yIndex] - U[index]);
+    else
+      P1[index] += sigma * (U[(xIndex + 1) + N * yIndex] - U[index]);
+    if (yIndex == M - 1)
+      P2[index] += sigma * (U[xIndex + N * (yIndex - 1)] - U[index]);
+    else
+      P2[index] += sigma * (U[xIndex + N * (yIndex + 1)] - U[index]);
+  }
+  return;
+}
+extern "C" __global__ void Proj_funcPD2D_iso_kernel(float *P1, float *P2, int N, int M)
+{
+
+  float denom;
+  // calculate each thread global index
+  const int xIndex = blockIdx.x * blockDim.x + threadIdx.x;
+  const int yIndex = blockIdx.y * blockDim.y + threadIdx.y;
+
+  int index = xIndex + N * yIndex;
+
+  if ((xIndex < N) && (yIndex < M))
+  {
+    denom = P1[index] * P1[index] + P2[index] * P2[index];
+    if (denom > 1.0f)
+    {
+      P1[index] = P1[index] / sqrtf(denom);
+      P2[index] = P2[index] / sqrtf(denom);
+    }
+  }
+  return;
+}
+extern "C" __global__ void Proj_funcPD2D_aniso_kernel(float *P1, float *P2, int N, int M)
+{
+
+  float val1, val2;
+  // calculate each thread global index
+  const int xIndex = blockIdx.x * blockDim.x + threadIdx.x;
+  const int yIndex = blockIdx.y * blockDim.y + threadIdx.y;
+
+  int index = xIndex + N * yIndex;
+
+  if ((xIndex < N) && (yIndex < M))
+  {
+    val1 = abs(P1[index]);
+    val2 = abs(P2[index]);
+    if (val1 < 1.0f)
+    {
+      val1 = 1.0f;
+    }
+    if (val2 < 1.0f)
+    {
+      val2 = 1.0f;
+    }
+    P1[index] = P1[index] / val1;
+    P2[index] = P2[index] / val2;
+  }
+  return;
+}
+extern "C" __global__ void DivProj2D_kernel(float *U, float *Input, float *P1, float *P2, float lt, float tau, int N, int M)
+{
+  float P_v1, P_v2, div_var;
+
+  // calculate each thread global index
+  const int xIndex = blockIdx.x * blockDim.x + threadIdx.x;
+  const int yIndex = blockIdx.y * blockDim.y + threadIdx.y;
+
+  int index = xIndex + N * yIndex;
+
+  if ((xIndex < N) && (yIndex < M))
+  {
+    if (xIndex == 0)
+      P_v1 = -P1[index];
+    else
+      P_v1 = -(P1[index] - P1[(xIndex - 1) + N * yIndex]);
+    if (yIndex == 0)
+      P_v2 = -P2[index];
+    else
+      P_v2 = -(P2[index] - P2[xIndex + N * (yIndex - 1)]);
+    div_var = P_v1 + P_v2;
+    U[index] = (U[index] - tau * div_var + lt * Input[index]) / (1.0 + lt);
+  }
+  return;
+}
+extern "C" __global__ void PDnonneg2D_kernel(float *Output, int dimX, int dimY)
+{
+  const long i = blockDim.x * blockIdx.x + threadIdx.x;
+  const long j = blockDim.y * blockIdx.y + threadIdx.y;
+
+  if (i >= dimX || j >= dimY)
+    return;
+  long long index = static_cast<long long>(i) + dimX * static_cast<long long>(j);
+
+  if (index < static_cast<long long>(dimX * dimY))
+  {
+    if (Output[index] < 0.0f)
+      Output[index] = 0.0f;
+  }
+}
+/************************************************/
 /*****************3D modules*********************/
 /************************************************/
-__device__ float3 Proj_funcPD3D_iso(float P1, float P2, float P3, long long index)
-{
-  float denom = P1 * P1 + P2 * P2 + P3 * P3;
-  if (denom > 1.0f)
-  {
-    float sq_denom = 1.0f / sqrtf(denom);
-    P1 *= sq_denom;
-    P2 *= sq_denom;
-    P3 *= sq_denom;
-  }
-
-  return make_float3(P1, P2, P3);
-}
-
-__device__ float3 Proj_funcPD3D_aniso(float P1, float P2, float P3, long long index)
-{
-  float val1 = abs(P1);
-  float val2 = abs(P2);
-  float val3 = abs(P3);
-
-  if (val1 < 1.0f)
-  {
-    val1 = 1.0f;
-  }
-
-  if (val2 < 1.0f)
-  {
-    val2 = 1.0f;
-  }
-
-  if (val3 < 1.0f)
-  {
-    val3 = 1.0f;
-  }
-
-  P1 /= val1;
-  P2 /= val2;
-  P3 /= val3;
-
-  return make_float3(P1, P2, P3);
-}
-
-__device__ float3 dualPD3D(float *U, float *P1, float *P2, float *P3, float sigma, int dimX, int dimY, int dimZ, long i, long j, long k, long long index, int methodTV)
-{
-  float P1_local = P1[index];
-  float P2_local = P2[index];
-  float P3_local = P3[index];
-
-  if (i == dimX - 1)
-  {
-    long long index1 = static_cast<long long>(i - 1) + dimX * static_cast<long long>(j) + dimX * dimY * static_cast<long long>(k);
-    P1_local += sigma * (U[index1] - U[index]);
-  }
-  else
-  {
-    long long index2 = static_cast<long long>(i + 1) + dimX * static_cast<long long>(j) + dimX * dimY * static_cast<long long>(k);
-    P1_local += sigma * (U[index2] - U[index]);
-  }
-
-  if (j == dimY - 1)
-  {
-    long long index3 = static_cast<long long>(i) + dimX * static_cast<long long>(j - 1) + dimX * dimY * static_cast<long long>(k);
-    P2_local += sigma * (U[index3] - U[index]);
-  }
-  else
-  {
-    long long index4 = static_cast<long long>(i) + dimX * static_cast<long long>(j + 1) + dimX * dimY * static_cast<long long>(k);
-    P2_local += sigma * (U[index4] - U[index]);
-  }
-
-  if (k == dimZ - 1)
-  {
-    long long index5 = static_cast<long long>(i) + dimX * static_cast<long long>(j) + dimX * dimY * static_cast<long long>(k - 1);
-    P3_local += sigma * (U[index5] - U[index]);
-  }
-  else
-  {
-    long long index6 = static_cast<long long>(i) + dimX * static_cast<long long>(j) + dimX * dimY * static_cast<long long>(k + 1);
-    P3_local += sigma * (U[index6] - U[index]);
-  }
-
-  if (methodTV == 0)
-  {
-    return Proj_funcPD3D_iso(P1_local, P2_local, P3_local, index);
-  }
-  else
-  {
-    return Proj_funcPD3D_aniso(P1_local, P2_local, P3_local, index);
-  }
-}
-
-__device__ float DivProj3D(float *Input, float U_in, float3 P1_P2_P3, float3 shifted_P1_P2_P3, float tau, float lt, int dimX, int dimY, long i, long j, long k, long long index)
-{
-  float P_v1, P_v2, P_v3;
-
-  if (i == 0)
-  {
-    P_v1 = -P1_P2_P3.x;
-  }
-  else
-  {
-    P_v1 = -(P1_P2_P3.x - shifted_P1_P2_P3.x);
-  }
-
-  if (j == 0)
-  {
-    P_v2 = -P1_P2_P3.y;
-  }
-  else
-  {
-    P_v2 = -(P1_P2_P3.y - shifted_P1_P2_P3.y);
-  }
-
-  if (k == 0)
-  {
-    P_v3 = -P1_P2_P3.z;
-  }
-  else
-  {
-    P_v3 = -(P1_P2_P3.z - shifted_P1_P2_P3.z);
-  }
-
-  float div_var = P_v1 + P_v2 + P_v3;
-
-  return (U_in - tau * div_var + lt * Input[index]) / (1.0f + lt);
-}
-
-extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, float *U_out, float *P1, float *P2, float *P3, float sigma, float tau, float lt, float theta, int dimX, int dimY, int dimZ, int nonneg, int methodTV)
-{
-  // calculate each thread global index
-  const long xIndex = blockIdx.x * blockDim.x + threadIdx.x;
-  const long yIndex = blockIdx.y * blockDim.y + threadIdx.y;
-  const long zIndex = blockIdx.z * blockDim.z + threadIdx.z;
-
-  if (xIndex >= dimX || yIndex >= dimY || zIndex >= dimZ)
-  {
-    return;
-  }
-
-  long long index = static_cast<long long>(xIndex) + dimX * static_cast<long long>(yIndex) + dimX * dimY * static_cast<long long>(zIndex);
-
-  float3 P1_P2_P3 = dualPD3D(U_in, P1, P2, P3, sigma, dimX, dimY, dimZ, xIndex, yIndex, zIndex, index, methodTV);
-  float3 shifted_P1_P2_P3;
-  if (xIndex == 0)
-  {
-    shifted_P1_P2_P3.x = 0.0f;
-  }
-  else
-  {
-    shifted_P1_P2_P3.x = dualPD3D(U_in, P1, P2, P3, sigma, dimX, dimY, dimZ, xIndex - 1, yIndex, zIndex, static_cast<long long>(xIndex - 1) + dimX * static_cast<long long>(yIndex) + dimX * dimY * static_cast<long long>(zIndex), methodTV).x;
-  }
-
-  if (yIndex == 0)
-  {
-    shifted_P1_P2_P3.y = 0.0f;
-  }
-  else
-  {
-    shifted_P1_P2_P3.y = dualPD3D(U_in, P1, P2, P3, sigma, dimX, dimY, dimZ, xIndex, yIndex - 1, zIndex, static_cast<long long>(xIndex) + dimX * static_cast<long long>(yIndex - 1) + dimX * dimY * static_cast<long long>(zIndex), methodTV).y;
-  }
-
-  if (zIndex == 0)
-  {
-    shifted_P1_P2_P3.z = 0.0f;
-  }
-  else
-  {
-    shifted_P1_P2_P3.z = dualPD3D(U_in, P1, P2, P3, sigma, dimX, dimY, dimZ, xIndex, yIndex, zIndex - 1, static_cast<long long>(xIndex) + dimX * static_cast<long long>(yIndex) + dimX * dimY * static_cast<long long>(zIndex - 1), methodTV).z;
-  }
-
-  float old_U = U_in[index];
-  if (nonneg != 0 && old_U < 0.0f)
-  {
-    old_U = 0.0f;
-  }
-
-  float new_U = DivProj3D(Input, old_U, P1_P2_P3, shifted_P1_P2_P3, tau, lt, dimX, dimY, xIndex, yIndex, zIndex, index);
-
-  P1[index] = P1_P2_P3.x;
-  P2[index] = P1_P2_P3.y;
-  P3[index] = P1_P2_P3.z;
-  U_out[index] += theta * (new_U - old_U);
-}
-
 extern "C" __global__ void dualPD3D_kernel(float *U, float *P1, float *P2, float *P3, float sigma, int dimX, int dimY, int dimZ)
 {
 
@@ -434,71 +363,3 @@ extern "C" __global__ void PDResidCalc3D_kernel(float *Input1, float *Input2, fl
     Output[index] = Input1[index] - Input2[index];
   }
 }
-/************************************************/
-/*****************2D modules*********************/
-/************************************************/
-__device__ float2 dualPD(float *U, float sigma, int N, int M, int xIndex, int yIndex, int index)
-{
-  float P1 = 0.0f;
-  float P2 = 0.0f;
-
-  if (xIndex == N - 1)
-    P1 += sigma * (U[(xIndex - 1) + N * yIndex] - U[index]);
-  else
-    P1 += sigma * (U[(xIndex + 1) + N * yIndex] - U[index]);
-
-  if (yIndex == M - 1)
-    P2 += sigma * (U[xIndex + N * (yIndex - 1)] - U[index]);
-  else
-    P2 += sigma * (U[xIndex + N * (yIndex + 1)] - U[index]);
-
-  return make_float2(P1, P2);
-}
-
-extern "C" __global__ void primal_dual_for_total_variation_2D(float *U, float sigma, int N, int M, bool nonneg)
-{
-  // calculate each thread global index
-  const int xIndex = blockIdx.x * blockDim.x + threadIdx.x;
-  const int yIndex = blockIdx.y * blockDim.y + threadIdx.y;
-
-  if (xIndex >= N || yIndex >= M)
-  {
-    return;
-  }
-
-  int index = xIndex + N * yIndex;
-  float2 P1_P2 = dualPD(U, sigma, N, M, xIndex, yIndex, index);
-}
-
-// template<bool nonneg>
-// extern "C" __global__ void primal_dual_for_total_variation_2D(float *U, float sigma, int N, int M) {}
-
-// extern "C" __global__ void primal_dual_for_total_variation_2D<true>(float *U, float sigma, int N, int M)
-// {
-//   // calculate each thread global index
-//   const int xIndex = blockIdx.x * blockDim.x + threadIdx.x;
-//   const int yIndex = blockIdx.y * blockDim.y + threadIdx.y;
-
-//   if (xIndex >= N || yIndex >= M)
-//   {
-//     return;
-//   }
-
-//   int index = xIndex + N * yIndex;
-//   float2 P1_P2 = dualPD(U, sigma, N, M, xIndex, yIndex, index);
-// }
-
-// extern "C" __global__ void primal_dual_for_total_variation_2D<false>(float *U, float sigma, int N, int M)
-// {
-//   // calculate each thread global index
-//   const int xIndex = blockIdx.x * blockDim.x + threadIdx.x;
-//   const int yIndex = blockIdx.y * blockDim.y + threadIdx.y;
-
-//   if (xIndex >= N || yIndex >= M)
-//   {
-//     return;
-//   }
-
-//   int index = xIndex + N * yIndex;
-//   float2 P1_P2 = dualPD(U, sigma, N, M, xIndex, yIndex, index);
-// }
