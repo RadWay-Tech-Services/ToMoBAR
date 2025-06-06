@@ -37,16 +37,16 @@ def prox_regul(self, X: cp.ndarray, _regularisation_: dict) -> cp.ndarray:
         )
     if "PD_TV" in _regularisation_["method"]:
         # Primal-Dual (PD) Total variation method by Chambolle-Pock
-        X_prox_orig = PD_TV_cupy(
-            X,
-            True,
-            _regularisation_["regul_param"],
-            _regularisation_["iterations"],
-            _regularisation_["methodTV"],
-            self.nonneg_regul,
-            _regularisation_["PD_LipschitzConstant"],
-            self.Atools.device_index,
-        )
+        # X_prox_orig = PD_TV_cupy(
+        #     X,
+        #     True,
+        #     _regularisation_["regul_param"],
+        #     _regularisation_["iterations"],
+        #     _regularisation_["methodTV"],
+        #     self.nonneg_regul,
+        #     _regularisation_["PD_LipschitzConstant"],
+        #     self.Atools.device_index,
+        # )
         # X_prox = X_prox_orig
         X_prox = PD_TV_cupy(
             X,
@@ -59,28 +59,28 @@ def prox_regul(self, X: cp.ndarray, _regularisation_: dict) -> cp.ndarray:
             self.Atools.device_index,
         )
 
-        if True: 
-            diff = (X_prox - X_prox_orig).get()
-            shape = diff.shape
-            import matplotlib.pyplot as plt
-            plt.figure()
-            plt.subplot(131)
-            plt.imshow(diff[shape[0] // 2, :, :])
-            plt.colorbar()
-            plt.title("diff, axial view")
+        # if True: 
+        #     diff = (X_prox - X_prox_orig).get()
+        #     shape = diff.shape
+        #     import matplotlib.pyplot as plt
+        #     plt.figure()
+        #     plt.subplot(131)
+        #     plt.imshow(diff[shape[0] // 2, :, :])
+        #     plt.colorbar()
+        #     plt.title("diff, axial view")
 
-            plt.subplot(132)
-            plt.imshow(diff[:, shape[1] // 2, :])
-            plt.colorbar()
-            plt.title("diff, coronal view")
+        #     plt.subplot(132)
+        #     plt.imshow(diff[:, shape[1] // 2, :])
+        #     plt.colorbar()
+        #     plt.title("diff, coronal view")
 
-            plt.subplot(133)
-            plt.imshow(diff[:, :, shape[2] // 2])
-            plt.colorbar()
-            plt.title("diff, sagittal view")
-            plt.show()
-        else:
-            X_prox = X_prox_orig
+        #     plt.subplot(133)
+        #     plt.imshow(diff[:, :, shape[2] // 2])
+        #     plt.colorbar()
+        #     plt.title("diff, sagittal view")
+        #     plt.show()
+        # else:
+        #     X_prox = X_prox_orig
 
     return X_prox
 
@@ -138,7 +138,7 @@ def PD_TV_cupy(
     if use_original_code:
         d_old = cp.empty(data.shape, dtype=cp.float32, order="C")
     else:
-        U_arrays = [out, cp.zeros(data.shape, dtype=cp.float32)]
+        U_arrays = [out, cp.zeros(data.shape, dtype=cp.float32, order="C")]
 
     # loading and compiling CUDA kernels:
     if data.ndim == 3:
@@ -213,6 +213,25 @@ def PD_TV_cupy(
                 Proj_funcPD_aniso_kernel(grid_dims, block_dims, params3)
             cp.cuda.runtime.deviceSynchronize()
 
+            # diff = (P3).get()
+            # shape = diff.shape
+            # import matplotlib.pyplot as plt
+            # plt.figure()
+            # plt.subplot(131)
+            # plt.imshow(diff[shape[0] // 2, :, :])
+            # plt.colorbar()
+            # plt.title("orig P, axial view")
+
+            # plt.subplot(132)
+            # plt.imshow(diff[:, shape[1] // 2, :])
+            # plt.colorbar()
+            # plt.title("orig P, coronal view")
+
+            # plt.subplot(133)
+            # plt.imshow(diff[:, :, shape[2] // 2])
+            # plt.colorbar()
+            # plt.title("orig P, sagittal view")
+            # plt.show()
             d_old = out.copy()
 
             if data3d:
@@ -228,9 +247,29 @@ def PD_TV_cupy(
                 params5 = (out, d_old, theta, dx, dy)
             getU_kernel(grid_dims, block_dims, params5)
             cp.cuda.runtime.deviceSynchronize()
+
+            
+            # diff = (out).get()
+            # shape = diff.shape
+            # import matplotlib.pyplot as plt
+            # plt.figure()
+            # plt.subplot(131)
+            # plt.imshow(diff[shape[0] // 2, :, :])
+            # plt.colorbar()
+            # plt.title("out, axial view")
+
+            # plt.subplot(132)
+            # plt.imshow(diff[:, shape[1] // 2, :])
+            # plt.colorbar()
+            # plt.title("out, coronal view")
+
+            # plt.subplot(133)
+            # plt.imshow(diff[:, :, shape[2] // 2])
+            # plt.colorbar()
+            # plt.title("out, sagittal view")
+            # plt.show()
         else:
             if data3d:
-                print(f"iter: {iter}, iter % 2: {iter % 2}, (iter + 1) % 2: {(iter + 1) % 2}")
                 params = (
                     data,
                     U_arrays[iter % 2],
@@ -251,6 +290,66 @@ def PD_TV_cupy(
             else:
                 params = (out, d_old, theta, dx, dy)
             primal_dual_for_total_variation(grid_dims, block_dims, params)
+            
+            # diff = (P3).get()
+            # shape = diff.shape
+            # import matplotlib.pyplot as plt
+            # plt.figure()
+            # plt.subplot(131)
+            # plt.imshow(diff[shape[0] // 2, :, :])
+            # plt.colorbar()
+            # plt.title("P, axial view")
+
+            # plt.subplot(132)
+            # plt.imshow(diff[:, shape[1] // 2, :])
+            # plt.colorbar()
+            # plt.title("P, coronal view")
+
+            # plt.subplot(133)
+            # plt.imshow(diff[:, :, shape[2] // 2])
+            # plt.colorbar()
+            # plt.title("P, sagittal view")
+            # plt.show()
+            
+            # diff = (U_arrays[iter % 2]).get()
+            # shape = diff.shape
+            # import matplotlib.pyplot as plt
+            # plt.figure()
+            # plt.subplot(131)
+            # plt.imshow(diff[shape[0] // 2, :, :])
+            # plt.colorbar()
+            # plt.title("U_in, axial view")
+
+            # plt.subplot(132)
+            # plt.imshow(diff[:, shape[1] // 2, :])
+            # plt.colorbar()
+            # plt.title("U_in, coronal view")
+
+            # plt.subplot(133)
+            # plt.imshow(diff[:, :, shape[2] // 2])
+            # plt.colorbar()
+            # plt.title("U_in, sagittal view")
+            # plt.show()
+
+            # diff = (U_arrays[(iter + 1) % 2]).get()
+            # shape = diff.shape
+            # import matplotlib.pyplot as plt
+            # plt.figure()
+            # plt.subplot(131)
+            # plt.imshow(diff[shape[0] // 2, :, :])
+            # plt.colorbar()
+            # plt.title("U_out, axial view")
+
+            # plt.subplot(132)
+            # plt.imshow(diff[:, shape[1] // 2, :])
+            # plt.colorbar()
+            # plt.title("U_out, coronal view")
+
+            # plt.subplot(133)
+            # plt.imshow(diff[:, :, shape[2] // 2])
+            # plt.colorbar()
+            # plt.title("U_out, sagittal view")
+            # plt.show()
 
     if not use_original_code:
         out = U_arrays[iterations % 2]

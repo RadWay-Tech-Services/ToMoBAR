@@ -144,32 +144,9 @@ extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, floa
 
   float3 P1_P2_P3 = dualPD3D(U_in, P1, P2, P3, sigma, dimX, dimY, dimZ, xIndex, yIndex, zIndex, index, methodTV);
   float3 shifted_P1_P2_P3;
-  if (xIndex == 0)
-  {
-    shifted_P1_P2_P3.x = 0.0f;
-  }
-  else
-  {
-    shifted_P1_P2_P3.x = dualPD3D(U_in, P1, P2, P3, sigma, dimX, dimY, dimZ, xIndex - 1, yIndex, zIndex, static_cast<long long>(xIndex - 1) + dimX * static_cast<long long>(yIndex) + dimX * dimY * static_cast<long long>(zIndex), methodTV).x;
-  }
-
-  if (yIndex == 0)
-  {
-    shifted_P1_P2_P3.y = 0.0f;
-  }
-  else
-  {
-    shifted_P1_P2_P3.y = dualPD3D(U_in, P1, P2, P3, sigma, dimX, dimY, dimZ, xIndex, yIndex - 1, zIndex, static_cast<long long>(xIndex) + dimX * static_cast<long long>(yIndex - 1) + dimX * dimY * static_cast<long long>(zIndex), methodTV).y;
-  }
-
-  if (zIndex == 0)
-  {
-    shifted_P1_P2_P3.z = 0.0f;
-  }
-  else
-  {
-    shifted_P1_P2_P3.z = dualPD3D(U_in, P1, P2, P3, sigma, dimX, dimY, dimZ, xIndex, yIndex, zIndex - 1, static_cast<long long>(xIndex) + dimX * static_cast<long long>(yIndex) + dimX * dimY * static_cast<long long>(zIndex - 1), methodTV).z;
-  }
+  shifted_P1_P2_P3.x = dualPD3D(U_in, P1, P2, P3, sigma, dimX, dimY, dimZ, xIndex - 1, yIndex, zIndex, static_cast<long long>(xIndex - 1) + dimX * static_cast<long long>(yIndex) + dimX * dimY * static_cast<long long>(zIndex), methodTV).x;
+  shifted_P1_P2_P3.y = dualPD3D(U_in, P1, P2, P3, sigma, dimX, dimY, dimZ, xIndex, yIndex - 1, zIndex, static_cast<long long>(xIndex) + dimX * static_cast<long long>(yIndex - 1) + dimX * dimY * static_cast<long long>(zIndex), methodTV).y;
+  shifted_P1_P2_P3.z = dualPD3D(U_in, P1, P2, P3, sigma, dimX, dimY, dimZ, xIndex, yIndex, zIndex - 1, static_cast<long long>(xIndex) + dimX * static_cast<long long>(yIndex) + dimX * dimY * static_cast<long long>(zIndex - 1), methodTV).z;
 
   float old_U = U_in[index];
   if (nonneg != 0 && old_U < 0.0f)
@@ -178,11 +155,11 @@ extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, floa
   }
 
   float new_U = DivProj3D(Input, old_U, P1_P2_P3, shifted_P1_P2_P3, tau, lt, dimX, dimY, xIndex, yIndex, zIndex, index);
+  U_out[index] = new_U + theta * (new_U - old_U);
 
   P1[index] = P1_P2_P3.x;
   P2[index] = P1_P2_P3.y;
   P3[index] = P1_P2_P3.z;
-  U_out[index] += theta * (new_U - old_U);
 }
 
 extern "C" __global__ void dualPD3D_kernel(float *U, float *P1, float *P2, float *P3, float sigma, int dimX, int dimY, int dimZ)
