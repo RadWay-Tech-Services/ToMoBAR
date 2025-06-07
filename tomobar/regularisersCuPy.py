@@ -36,21 +36,8 @@ def prox_regul(self, X: cp.ndarray, _regularisation_: dict) -> cp.ndarray:
             self.Atools.device_index,
         )
     if "PD_TV" in _regularisation_["method"]:
-        # Primal-Dual (PD) Total variation method by Chambolle-Pock
-        # X_prox_orig = PD_TV_cupy(
-        #     X,
-        #     True,
-        #     _regularisation_["regul_param"],
-        #     _regularisation_["iterations"],
-        #     _regularisation_["methodTV"],
-        #     self.nonneg_regul,
-        #     _regularisation_["PD_LipschitzConstant"],
-        #     self.Atools.device_index,
-        # )
-        # X_prox = X_prox_orig
         X_prox = PD_TV_cupy(
             X,
-            False,
             _regularisation_["regul_param"],
             _regularisation_["iterations"],
             _regularisation_["methodTV"],
@@ -59,35 +46,11 @@ def prox_regul(self, X: cp.ndarray, _regularisation_: dict) -> cp.ndarray:
             self.Atools.device_index,
         )
 
-        # if True: 
-        #     diff = (X_prox - X_prox_orig).get()
-        #     shape = diff.shape
-        #     import matplotlib.pyplot as plt
-        #     plt.figure()
-        #     plt.subplot(131)
-        #     plt.imshow(diff[shape[0] // 2, :, :])
-        #     plt.colorbar()
-        #     plt.title("diff, axial view")
-
-        #     plt.subplot(132)
-        #     plt.imshow(diff[:, shape[1] // 2, :])
-        #     plt.colorbar()
-        #     plt.title("diff, coronal view")
-
-        #     plt.subplot(133)
-        #     plt.imshow(diff[:, :, shape[2] // 2])
-        #     plt.colorbar()
-        #     plt.title("diff, sagittal view")
-        #     plt.show()
-        # else:
-        #     X_prox = X_prox_orig
-
     return X_prox
 
 
 def PD_TV_cupy(
     data: cp.ndarray,
-    use_original_code: bool,
     regularisation_parameter: Optional[float] = 1e-05,
     iterations: Optional[int] = 1000,
     methodTV: Optional[int] = 0,
@@ -131,23 +94,14 @@ def PD_TV_cupy(
     lt = cp.float32(tau / regularisation_parameter)
 
     # initialise CuPy arrays here:
-    out = data.copy()
-    P1 = cp.zeros(data.shape, dtype=cp.float32, order="C")
-    P2 = cp.zeros(data.shape, dtype=cp.float32, order="C")
-
-    if use_original_code:
-        d_old = cp.empty(data.shape, dtype=cp.float32, order="C")
-    else:
-        U_arrays = [out, cp.zeros(data.shape, dtype=cp.float32, order="C")]
-        P1_arrays = [P1, cp.zeros(data.shape, dtype=cp.float32, order="C")]
-        P2_arrays = [P2, cp.zeros(data.shape, dtype=cp.float32, order="C")]
+    U_arrays = [data.copy(), cp.zeros(data.shape, dtype=cp.float32, order="C")]
+    P1_arrays = [cp.zeros(data.shape, dtype=cp.float32, order="C")] * 2
+    P2_arrays = [cp.zeros(data.shape, dtype=cp.float32, order="C")] * 2
 
     # loading and compiling CUDA kernels:
     if data.ndim == 3:
         data3d = True
-        P3 = cp.zeros(data.shape, dtype=cp.float32, order="C")
-        if not use_original_code:
-            P3_arrays = [P3, cp.zeros(data.shape, dtype=cp.float32, order="C")]
+        P3_arrays = [cp.zeros(data.shape, dtype=cp.float32, order="C")] * 2
         dz, dy, dx = data.shape
         # setting grid/block parameters
         block_x = 128
@@ -160,12 +114,6 @@ def PD_TV_cupy(
         primal_dual_for_total_variation = module.get_function(
             "primal_dual_for_total_variation_3D"
         )
-        dualPD_kernel = module.get_function("dualPD3D_kernel")
-        Proj_funcPD_iso_kernel = module.get_function("Proj_funcPD3D_iso_kernel")
-        Proj_funcPD_aniso_kernel = module.get_function("Proj_funcPD3D_aniso_kernel")
-        DivProj_kernel = module.get_function("DivProj3D_kernel")
-        PDnonneg_kernel = module.get_function("PDnonneg3D_kernel")
-        getU_kernel = module.get_function("getU3D_kernel")
     else:
         data3d = False
         dy, dx = data.shape
@@ -179,85 +127,50 @@ def PD_TV_cupy(
         primal_dual_for_total_variation = module.get_function(
             "primal_dual_for_total_variation_2D"
         )
-        dualPD_kernel = module.get_function("dualPD_kernel")
-        Proj_funcPD_iso_kernel = module.get_function("Proj_funcPD2D_iso_kernel")
-        Proj_funcPD_aniso_kernel = module.get_function("Proj_funcPD2D_aniso_kernel")
-        DivProj_kernel = module.get_function("DivProj2D_kernel")
-        PDnonneg_kernel = module.get_function("PDnonneg2D_kernel")
-        getU_kernel = module.get_function("getU2D_kernel")
 
     # perform algorithm iterations
     for iter in range(iterations):
-        if use_original_code:
-            # calculate differences
-            if data3d:
-                params1 = (out, P1, P2, P3, sigma, dx, dy, dz)
-            else:
-                params1 = (out, P1, P2, sigma, dx, dy)
-            dualPD_kernel(
-                grid_dims, block_dims, params1
-            )  # computing the the dual P variable
-            cp.cuda.runtime.deviceSynchronize()
-
-            if nonneg != 0:
-                if data3d:
-                    params2 = (out, dx, dy, dz)
-                else:
-                    params2 = (out, dx, dy)
-                PDnonneg_kernel(grid_dims, block_dims, params2)
-                cp.cuda.runtime.deviceSynchronize()
-
-            if data3d:
-                params3 = (P1, P2, P3, dx, dy, dz)
-            else:
-                params3 = (P1, P2, dx, dy)
-            if methodTV == 0:
-                Proj_funcPD_iso_kernel(grid_dims, block_dims, params3)
-            else:
-                Proj_funcPD_aniso_kernel(grid_dims, block_dims, params3)
-            cp.cuda.runtime.deviceSynchronize()
-
-            d_old = out.copy()
-
-            if data3d:
-                params4 = (out, data, P1, P2, P3, lt, tau, dx, dy, dz)
-            else:
-                params4 = (out, data, P1, P2, lt, tau, dx, dy)
-            DivProj_kernel(grid_dims, block_dims, params4)  # calculate divergence
-            cp.cuda.runtime.deviceSynchronize()
-
-            if data3d:
-                params5 = (out, d_old, theta, dx, dy, dz)
-            else:
-                params5 = (out, d_old, theta, dx, dy)
-            getU_kernel(grid_dims, block_dims, params5)
-            cp.cuda.runtime.deviceSynchronize()
+        if data3d:
+            params = (
+                data,
+                U_arrays[iter % 2],
+                U_arrays[(iter + 1) % 2],
+                P1_arrays[iter % 2],
+                P2_arrays[iter % 2],
+                P3_arrays[iter % 2],
+                P1_arrays[(iter + 1) % 2],
+                P2_arrays[(iter + 1) % 2],
+                P3_arrays[(iter + 1) % 2],
+                sigma,
+                tau,
+                lt,
+                theta,
+                dx,
+                dy,
+                dz,
+                nonneg,
+                methodTV,
+            )
         else:
-            if data3d:
-                params = (
-                    data,
-                    U_arrays[iter % 2],
-                    U_arrays[(iter + 1) % 2],
-                    P1_arrays[iter % 2],
-                    P2_arrays[iter % 2],
-                    P3_arrays[iter % 2],
-                    P1_arrays[(iter + 1) % 2],
-                    P2_arrays[(iter + 1) % 2],
-                    P3_arrays[(iter + 1) % 2],
-                    sigma,
-                    tau,
-                    lt,
-                    theta,
-                    dx,
-                    dy,
-                    dz,
-                    nonneg,
-                    methodTV,
-                )
-            else:
-                params = (out, d_old, theta, dx, dy)
-            primal_dual_for_total_variation(grid_dims, block_dims, params)
+            params = (
+                data,
+                U_arrays[iter % 2],
+                U_arrays[(iter + 1) % 2],
+                P1_arrays[iter % 2],
+                P2_arrays[iter % 2],
+                P1_arrays[(iter + 1) % 2],
+                P2_arrays[(iter + 1) % 2],
+                sigma,
+                tau,
+                lt,
+                theta,
+                dx,
+                dy,
+                dz,
+                nonneg,
+                methodTV,
+            )
 
-    if not use_original_code:
-        out = U_arrays[iterations % 2]
-    return out
+        primal_dual_for_total_variation(grid_dims, block_dims, params)
+
+    return U_arrays[iterations % 2]
