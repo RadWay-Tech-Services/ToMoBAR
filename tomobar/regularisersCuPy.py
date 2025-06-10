@@ -106,13 +106,13 @@ def PD_TV_cupy(
 
     # initialise CuPy arrays here:
     U_arrays = [data.copy(), cp.zeros(data.shape, dtype=cp.float32, order="C")]
-    P1_arrays = [cp.zeros(data.shape, dtype=cp.float32, order="C")] * 2
-    P2_arrays = [cp.zeros(data.shape, dtype=cp.float32, order="C")] * 2
+    P1_arrays = [cp.zeros(data.shape, dtype=cp.float32, order="C"), cp.zeros(data.shape, dtype=cp.float32, order="C")]
+    P2_arrays = [cp.zeros(data.shape, dtype=cp.float32, order="C"), cp.zeros(data.shape, dtype=cp.float32, order="C")]
 
     # loading and compiling CUDA kernels:
     if data.ndim == 3:
         data3d = True
-        P3_arrays = [cp.zeros(data.shape, dtype=cp.float32, order="C")] * 2
+        P3_arrays = [cp.zeros(data.shape, dtype=cp.float32, order="C"), cp.zeros(data.shape, dtype=cp.float32, order="C")]
         dz, dy, dx = data.shape
         # setting grid/block parameters
         block_x = 128
