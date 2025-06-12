@@ -411,7 +411,6 @@ def test_FISTA_compare_regularisations(angles, raw_data, flats, darks):
         "regul_param": 0.0005,
         "iterations": 10,
         "device_regulariser": 0,
-        "use_original": True,
     }
 
     Iter_rec_original = RecTools.FISTA(_data_, _algorithm_, _regularisation_)
@@ -423,41 +422,35 @@ def test_FISTA_compare_regularisations(angles, raw_data, flats, darks):
     assert Iter_rec_original.dtype == np.float32, "original"
     assert Iter_rec_original.shape == (128, 160, 160), "original"
 
-    _regularisation_ = {
-        "method": "PD_TV",
-        "regul_param": 0.0005,
-        "iterations": 10,
-        "device_regulariser": 0,
-        "use_original": False,
-    }
+    for regulariser in ["PD_TV_fused", "PD_TV_separate_p_fused"]:
+        _regularisation_["method"] = regulariser
+        Iter_rec = RecTools.FISTA(_data_, _algorithm_, _regularisation_)
 
-    Iter_rec = RecTools.FISTA(_data_, _algorithm_, _regularisation_)
+        Iter_rec = Iter_rec.get()
 
-    Iter_rec = Iter_rec.get()
+        assert 4000 <= lc <= 5000, "new"
+        assert_allclose(np.max(Iter_rec), 0.0212302, rtol=1e-03), "new"
+        assert Iter_rec.dtype == np.float32, "new"
+        assert Iter_rec.shape == (128, 160, 160), "new"
+        
+        diff = Iter_rec - Iter_rec_original
+        # diff_shape = diff.shape
+        # import matplotlib.pyplot as plt
+        # plt.figure()
+        # plt.subplot(131)
+        # plt.imshow(diff[diff_shape[0] // 2, :, :])
+        # plt.colorbar()
+        # plt.title("diff, axial view")
 
-    assert 4000 <= lc <= 5000, "new"
-    assert_allclose(np.max(Iter_rec), 0.0212302, rtol=1e-03), "new"
-    assert Iter_rec.dtype == np.float32, "new"
-    assert Iter_rec.shape == (128, 160, 160), "new"
-    
-    diff = Iter_rec - Iter_rec_original
-    # diff_shape = diff.shape
-    # import matplotlib.pyplot as plt
-    # plt.figure()
-    # plt.subplot(131)
-    # plt.imshow(diff[diff_shape[0] // 2, :, :])
-    # plt.colorbar()
-    # plt.title("diff, axial view")
+        # plt.subplot(132)
+        # plt.imshow(diff[:, diff_shape[1] // 2, :])
+        # plt.colorbar()
+        # plt.title("diff, coronal view")
 
-    # plt.subplot(132)
-    # plt.imshow(diff[:, diff_shape[1] // 2, :])
-    # plt.colorbar()
-    # plt.title("diff, coronal view")
-
-    # plt.subplot(133)
-    # plt.imshow(diff[:, :, diff_shape[2] // 2])
-    # plt.colorbar()
-    # plt.title("diff, sagittal view")
-    # plt.show()
-    
-    assert not np.any(diff), "difference between solutions is not zero"
+        # plt.subplot(133)
+        # plt.imshow(diff[:, :, diff_shape[2] // 2])
+        # plt.colorbar()
+        # plt.title("diff, sagittal view")
+        # plt.show()
+        
+        assert not np.any(diff), "difference between solutions is not zero"

@@ -7,6 +7,7 @@
 """
 
 import numpy as np
+import timeit
 from typing import Union
 
 try:
@@ -354,7 +355,8 @@ class RecToolsIRCuPy:
         _data_: dict,
         _algorithm_: Union[dict, None] = None,
         _regularisation_: Union[dict, None] = None,
-    ) -> cp.ndarray:
+        _benchmark_: Union[dict, None] = None,
+    ) -> Union[cp.ndarray, tuple[cp.ndarray, int]]:
         """A Fast Iterative Shrinkage-Thresholding Algorithm [BT2009]_ with various types of regularisation from
         the regularisation toolkit [KAZ2019]_.
 
@@ -397,6 +399,9 @@ class RecToolsIRCuPy:
 
         t = cp.float32(1.0)
         X_t = cp.copy(X)
+        if _benchmark_ and _benchmark_["measurement_target"] == "regularisation":
+            regularisation_runtime_s = 0
+
         # FISTA iterations
         for iter_no in range(_algorithm_upd_["iterations"]):
             # loop over subsets (OS)
@@ -440,8 +445,22 @@ class RecToolsIRCuPy:
 
                 if _regularisation_upd_["method"] is not None:
                     ##### The proximal operator of the chosen regulariser #####
-                    X = prox_regul(self, X, _regularisation_upd_)
+                    if (
+                        _benchmark_
+                        and _benchmark_["measurement_target"] == "regularisation"
+                    ):
+                        start_time = timeit.default_timer()
+                        X = prox_regul(self, X, _regularisation_upd_)
+                        end_time = timeit.default_timer()
+                        runtime_s = end_time - start_time
+                        regularisation_runtime_s += runtime_s
+                    else:
+                        X = prox_regul(self, X, _regularisation_upd_)
 
                 t = cp.float32((1.0 + np.sqrt(1.0 + 4.0 * t**2)) * 0.5)
                 X_t = X + cp.float32((t_old - 1.0) / t) * (X - X_old)
+
+        if _benchmark_ and _benchmark_["measurement_target"] == "regularisation":
+            return (X, regularisation_runtime_s)
+
         return X

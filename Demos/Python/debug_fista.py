@@ -73,7 +73,7 @@ lc = RecToolsCP_iter.powermethod(_data_)
 _algorithm_ = {"iterations": 15, "lipschitz_const": lc.get()}
 
 _regularisation_ = {
-    "method": "PD_TV",
+    "method": "PD_TV_fused",
     "regul_param": 0.0005,
     "iterations": 35,
     "device_regulariser": 0,
