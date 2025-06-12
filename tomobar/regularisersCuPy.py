@@ -38,7 +38,7 @@ def prox_regul(self, X: cp.ndarray, _regularisation_: dict) -> cp.ndarray:
             _regularisation_["time_marching_step"],
             self.Atools.device_index,
         )
-    if "PD_TV" in _regularisation_["method"]:
+    elif "PD_TV" == _regularisation_["method"]:
         X_prox = PD_TV_cupy_original(
             X,
             _regularisation_["regul_param"],
@@ -48,7 +48,7 @@ def prox_regul(self, X: cp.ndarray, _regularisation_: dict) -> cp.ndarray:
             _regularisation_["PD_LipschitzConstant"],
             self.Atools.device_index,
         )
-    if "PD_TV_fused" in _regularisation_["method"]:
+    elif "PD_TV_fused" == _regularisation_["method"]:
         X_prox = PD_TV_cupy(
             X,
             _regularisation_["regul_param"],
@@ -58,7 +58,7 @@ def prox_regul(self, X: cp.ndarray, _regularisation_: dict) -> cp.ndarray:
             _regularisation_["PD_LipschitzConstant"],
             self.Atools.device_index,
         )
-    if  "PD_TV_separate_p_fused" in _regularisation_["method"]:
+    elif  "PD_TV_separate_p_fused" == _regularisation_["method"]:
         X_prox = PD_TV_cupy_separate_p(
             X,
             _regularisation_["regul_param"],

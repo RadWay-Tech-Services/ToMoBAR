@@ -1,6 +1,7 @@
 import cupy as cp
 import numpy as np
 from numpy.testing import assert_allclose
+import pytest
 
 from tomobar.methodsIR_CuPy import RecToolsIRCuPy
 from tomobar.supp.suppTools import normaliser
@@ -374,7 +375,8 @@ def test_FISTA_OS_PWLS_reg_cp_3D(angles, raw_data, flats, darks):
     assert Iter_rec.dtype == np.float32
     assert Iter_rec.shape == (128, 160, 160)
 
-def test_FISTA_compare_regularisations(angles, raw_data, flats, darks):
+@pytest.mark.parametrize("regulariser", ["PD_TV_fused", "PD_TV_separate_p_fused"])
+def test_FISTA_compare_regularisations(angles, raw_data, flats, darks, regulariser):
     normalised = normaliser(raw_data, flats, darks)
     raw_data_norm = np.float32(np.divide(raw_data, np.max(raw_data).astype(float)))
     normalised_cp = cp.asarray(normalised)
@@ -422,35 +424,34 @@ def test_FISTA_compare_regularisations(angles, raw_data, flats, darks):
     assert Iter_rec_original.dtype == np.float32, "original"
     assert Iter_rec_original.shape == (128, 160, 160), "original"
 
-    for regulariser in ["PD_TV_fused", "PD_TV_separate_p_fused"]:
-        _regularisation_["method"] = regulariser
-        Iter_rec = RecTools.FISTA(_data_, _algorithm_, _regularisation_)
+    _regularisation_["method"] = regulariser
+    Iter_rec = RecTools.FISTA(_data_, _algorithm_, _regularisation_)
 
-        Iter_rec = Iter_rec.get()
+    Iter_rec = Iter_rec.get()
 
-        assert 4000 <= lc <= 5000, "new"
-        assert_allclose(np.max(Iter_rec), 0.0212302, rtol=1e-03), "new"
-        assert Iter_rec.dtype == np.float32, "new"
-        assert Iter_rec.shape == (128, 160, 160), "new"
-        
-        diff = Iter_rec - Iter_rec_original
-        # diff_shape = diff.shape
-        # import matplotlib.pyplot as plt
-        # plt.figure()
-        # plt.subplot(131)
-        # plt.imshow(diff[diff_shape[0] // 2, :, :])
-        # plt.colorbar()
-        # plt.title("diff, axial view")
+    assert 4000 <= lc <= 5000, "new"
+    assert_allclose(np.max(Iter_rec), 0.0212302, rtol=1e-03), "new"
+    assert Iter_rec.dtype == np.float32, "new"
+    assert Iter_rec.shape == (128, 160, 160), "new"
+    
+    diff = Iter_rec - Iter_rec_original
+    # diff_shape = diff.shape
+    # import matplotlib.pyplot as plt
+    # plt.figure()
+    # plt.subplot(131)
+    # plt.imshow(diff[diff_shape[0] // 2, :, :])
+    # plt.colorbar()
+    # plt.title("diff, axial view")
 
-        # plt.subplot(132)
-        # plt.imshow(diff[:, diff_shape[1] // 2, :])
-        # plt.colorbar()
-        # plt.title("diff, coronal view")
+    # plt.subplot(132)
+    # plt.imshow(diff[:, diff_shape[1] // 2, :])
+    # plt.colorbar()
+    # plt.title("diff, coronal view")
 
-        # plt.subplot(133)
-        # plt.imshow(diff[:, :, diff_shape[2] // 2])
-        # plt.colorbar()
-        # plt.title("diff, sagittal view")
-        # plt.show()
-        
-        assert not np.any(diff), "difference between solutions is not zero"
+    # plt.subplot(133)
+    # plt.imshow(diff[:, :, diff_shape[2] // 2])
+    # plt.colorbar()
+    # plt.title("diff, sagittal view")
+    # plt.show()
+    
+    assert not np.any(diff), "difference between solutions is not zero"

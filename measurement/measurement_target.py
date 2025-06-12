@@ -103,8 +103,9 @@ def main(args: argparse.Namespace):
 
     RecFISTA = RecToolsCP.FISTA(_data_, _algorithm_, _regularisation_, _benchmark_)
 
-    measurement_iteration_count = 10
     start_time = timeit.default_timer()
+
+    measurement_iteration_count = 10
     if _benchmark_ and _benchmark_["measurement_target"] == "end_to_end":
         for x in range(measurement_iteration_count):
             RecFISTA = RecToolsCP.FISTA(
@@ -118,11 +119,12 @@ def main(args: argparse.Namespace):
             )
             cumulative_regularisation_runtime_s += regularisation_runtime_s
 
+        regularisation_runtime_s = (
+            cumulative_regularisation_runtime_s / measurement_iteration_count
+        )
+
     end_time = timeit.default_timer()
     end_to_end_runtime_s = (end_time - start_time) / measurement_iteration_count
-    regularisation_runtime_s = (
-        cumulative_regularisation_runtime_s / measurement_iteration_count
-    )
 
     runtime_s = 0
     if _benchmark_ and _benchmark_["measurement_target"] == "end_to_end":
