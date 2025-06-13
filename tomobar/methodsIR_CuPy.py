@@ -7,7 +7,6 @@
 """
 
 import numpy as np
-import timeit
 from typing import Union
 
 try:
@@ -449,11 +448,21 @@ class RecToolsIRCuPy:
                         _benchmark_
                         and _benchmark_["measurement_target"] == "regularisation"
                     ):
+                        import timeit
+                        start_gpu = cp.cuda.Event()
+                        end_gpu = cp.cuda.Event()
+                        start_gpu.record()
+
                         start_time = timeit.default_timer()
                         X = prox_regul(self, X, _regularisation_upd_)
                         end_time = timeit.default_timer()
-                        runtime_s = end_time - start_time
-                        regularisation_runtime_s += runtime_s
+                        end_gpu.record()
+                        end_gpu.synchronize()
+
+                        runtime_cpu_s = end_time - start_time
+                        runtime_gpu_s = cp.cuda.get_elapsed_time(start_gpu, end_gpu) / 1000
+                        # regularisation_runtime_s += runtime_cpu_s
+                        regularisation_runtime_s += runtime_gpu_s
                     else:
                         X = prox_regul(self, X, _regularisation_upd_)
 
