@@ -212,6 +212,8 @@ class RecToolsDIRCuPy(RecToolsDIR):
         c1dfftshift = module.get_function("c1dfftshift")
         c2dfftshift = module.get_function("c2dfftshift")
         unpadding_mul_phi = module.get_function("unpadding_mul_phi")
+        
+        cache = xp.fft.config.get_plan_cache()
 
         # initialisation
         [nz, nproj, n] = data.shape
@@ -292,6 +294,8 @@ class RecToolsDIRCuPy(RecToolsDIR):
             tmp_p[start_index:end_index, :, :] = tmp[:, :, padding_m:padding_p]
 
             del tmp
+        
+        cache.clear()
 
         # Memory clean up of filter and input data
         del data, t, wfilter, w
@@ -428,11 +432,6 @@ class RecToolsDIRCuPy(RecToolsDIR):
         unpad_recon_p = (n - odd_horiz) // 2 + (recon_size + odd_recon_size) // 2
         unpad_recon_size = unpad_recon_p - unpad_recon_m
 
-        # memory for recon
-        recon_up = xp.empty(
-            [unpad_z, unpad_recon_size, unpad_recon_size], dtype=xp.float32
-        )
-
         # STEP3: ifft 2d
         c2dfftshift(
             (
@@ -454,6 +453,13 @@ class RecToolsDIRCuPy(RecToolsDIR):
             ),
             (32, 8, 1),
             (fde, n, nz // 2, m),
+        )
+
+        cache.clear()
+
+        # memory for recon
+        recon_up = xp.empty(
+            [unpad_z, unpad_recon_size, unpad_recon_size], dtype=xp.float32
         )
 
         # STEP4: unpadding, multiplication by phi and restructure memory
