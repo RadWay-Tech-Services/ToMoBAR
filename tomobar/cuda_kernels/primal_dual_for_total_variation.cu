@@ -64,7 +64,7 @@ __device__ float DivProj3D(float *Input, float U_in, float P1, float P2, float P
   return (U_in - tau * div_var + lt * Input[index]) / (1.0f + lt);
 }
 
-extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, float *U_out, float *P1_in, float *P2_in, float *P3_in, float *P1_out, float *P2_out, float *P3_out, float sigma, float tau, float lt, float theta, int dimX, int dimY, int dimZ, int nonneg, int methodTV)
+extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, cudaTextureObject_t U_in, float *U_out, cudaTextureObject_t P1_in, cudaTextureObject_t P2_in, cudaTextureObject_t P3_in, float *P1_out, float *P2_out, float *P3_out, float sigma, float tau, float lt, float theta, int dimX, int dimY, int dimZ, int nonneg, int methodTV)
 {
   // calculate each thread global index
   const long xIndex = blockIdx.x * blockDim.x + threadIdx.x;
@@ -84,84 +84,110 @@ extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, floa
   long long index_prev_x = index - xStride;
   long long index_prev_y = index - yStride;
   long long index_prev_z = index - zStride;
-  long long index_prev_x_prev_y = index - xStride - yStride;
-  long long index_prev_x_prev_z = index - xStride - zStride;
-  long long index_prev_y_prev_z = index - yStride - zStride;
 
-  float P1 = P1_in[index];
-  float P2 = P2_in[index];
-  float P3 = P3_in[index];
-  float U = U_in[index];
+  float P1_prev_x = 0.0f;
+  float P2_prev_x = 0.0f;
+  float P3_prev_x = 0.0f;
+  float U_prev_x = 0.0f;
 
-  float P1_prev_x = (xIndex > 0) ? P1_in[index_prev_x] : 0.0f;
-  float P2_prev_x = (xIndex > 0) ? P2_in[index_prev_x] : 0.0f;
-  float P3_prev_x = (xIndex > 0) ? P3_in[index_prev_x] : 0.0f;
-  float U_prev_x = (xIndex > 0) ? U_in[index_prev_x] : 0.0f;
+  float P1_prev_y = 0.0f;
+  float P2_prev_y = 0.0f;
+  float P3_prev_y = 0.0f;
+  float U_prev_y = 0.0f;
 
-  float P1_prev_y = (yIndex > 0) ? P1_in[index_prev_y] : 0.0f;
-  float P2_prev_y = (yIndex > 0) ? P2_in[index_prev_y] : 0.0f;
-  float P3_prev_y = (yIndex > 0) ? P3_in[index_prev_y] : 0.0f;
-  float U_prev_y = (yIndex > 0) ? U_in[index_prev_y] : 0.0f;
+  float P1_prev_z = 0.0f;
+  float P2_prev_z = 0.0f;
+  float P3_prev_z = 0.0f;
+  float U_prev_z = 0.0f;
 
-  float P1_prev_z = (zIndex > 0) ? P1_in[index_prev_z] : 0.0f;
-  float P2_prev_z = (zIndex > 0) ? P2_in[index_prev_z] : 0.0f;
-  float P3_prev_z = (zIndex > 0) ? P3_in[index_prev_z] : 0.0f;
-  float U_prev_z = (zIndex > 0) ? U_in[index_prev_z] : 0.0f;
+  float U_prev_x_prev_y = 0.0;
+  float U_prev_x_prev_z = 0.0f;
+  float U_prev_y_prev_z = 0.0f;
+
+  float P1 = tex3D<float>(P1_in, xIndex, yIndex, zIndex);
+  float P2 = tex3D<float>(P2_in, xIndex, yIndex, zIndex);
+  float P3 = tex3D<float>(P3_in, xIndex, yIndex, zIndex);
+  float U = tex3D<float>(U_in, xIndex, yIndex, zIndex);
+
+  if (xIndex > 0)
+  {
+    P1_prev_x = tex3D<float>(P1_in, xIndex - 1, yIndex, zIndex);
+    P2_prev_x = tex3D<float>(P2_in, xIndex - 1, yIndex, zIndex);
+    P3_prev_x = tex3D<float>(P3_in, xIndex - 1, yIndex, zIndex);
+    U_prev_x = tex3D<float>(U_in, xIndex - 1, yIndex, zIndex);
+  }
+
+  if (yIndex > 0)
+  {
+    P1_prev_y = tex3D<float>(P1_in, xIndex, yIndex - 1, zIndex);
+    P2_prev_y = tex3D<float>(P2_in, xIndex, yIndex - 1, zIndex);
+    P3_prev_y = tex3D<float>(P3_in, xIndex, yIndex - 1, zIndex);
+    U_prev_y = tex3D<float>(U_in, xIndex, yIndex - 1, zIndex);
+  }
+
+  if (zIndex > 0)
+  {
+    P1_prev_z = tex3D<float>(P1_in, xIndex, yIndex, zIndex - 1);
+    P2_prev_z = tex3D<float>(P2_in, xIndex, yIndex, zIndex - 1);
+    P3_prev_z = tex3D<float>(P3_in, xIndex, yIndex, zIndex - 1);
+    U_prev_z = tex3D<float>(U_in, xIndex, yIndex, zIndex - 1);
+  }
 
   bool last_x = xIndex == dimX - 1;
   bool last_y = yIndex == dimY - 1;
   bool last_z = zIndex == dimZ - 1;
 
-  float U_prev_x_prev_y = 0.0;
   if (((xIndex > 0) && last_y) || ((yIndex > 0) && last_x))
   {
-    U_prev_x_prev_y = U_in[index_prev_x_prev_y];
+    U_prev_x_prev_y = tex3D<float>(U_in, xIndex - 1, yIndex - 1, zIndex);
   }
 
-  float U_prev_x_prev_z = 0.0f;
   if (((xIndex > 0) && last_z) || ((zIndex > 0) && last_x))
   {
-    U_prev_x_prev_z = U_in[index_prev_x_prev_z];
+    U_prev_x_prev_z = tex3D<float>(U_in, xIndex - 1, yIndex, zIndex - 1);
   }
 
-  float U_prev_y_prev_z = 0.0f;
   if (((yIndex > 0) && last_z) || ((zIndex > 0) && last_y))
   {
-    U_prev_y_prev_z = U_in[index_prev_y_prev_z];
+    U_prev_y_prev_z = tex3D<float>(U_in, xIndex, yIndex - 1, zIndex - 1);
   }
 
-  float U_values[4] = {
-      U,
-      last_x ? U_prev_x : U_in[index + xStride],
-      last_y ? U_prev_y : U_in[index + yStride],
-      last_z ? U_prev_z : U_in[index + zStride]};
-  dualPD3D(U_values, &P1, &P2, &P3, sigma, methodTV);
+  {
+    float U_values[4] = {
+        U,
+        last_x ? U_prev_x : tex3D<float>(U_in, xIndex + 1, yIndex, zIndex),
+        last_y ? U_prev_y : tex3D<float>(U_in, xIndex, yIndex + 1, zIndex),
+        last_z ? U_prev_z : tex3D<float>(U_in, xIndex, yIndex, zIndex + 1)};
+    dualPD3D(U_values, &P1, &P2, &P3, sigma, methodTV);
+  }
 
   if (xIndex > 0)
   {
-    U_values[0] = U_prev_x;
-    U_values[1] = U;
-    U_values[2] = last_y ? U_prev_x_prev_y : U_in[index - xStride + yStride];
-    U_values[3] = last_z ? U_prev_x_prev_z : U_in[index - xStride + zStride];
+    float U_values[4] = {
+        U_prev_x,
+        U,
+        last_y ? U_prev_x_prev_y : tex3D<float>(U_in, xIndex - 1, yIndex + 1, zIndex),
+        last_z ? U_prev_x_prev_z : tex3D<float>(U_in, xIndex - 1, yIndex, zIndex + 1)};
     dualPD3D(U_values, &P1_prev_x, &P2_prev_x, &P3_prev_x, sigma, methodTV);
   }
 
   if (yIndex > 0)
   {
-    U_values[0] = U_prev_y;
-    U_values[1] = last_x ? U_prev_x_prev_y : U_in[index + xStride - yStride];
-    // U_values[2] = U;
-    U_values[2] = ((yIndex - 1) == (dimY - 1)) ? U_in[index - yStride - yStride] : U;
-    U_values[3] = last_z ? U_prev_y_prev_z : U_in[index - yStride + zStride];
+    float U_values[4] = {
+        U_prev_y,
+        last_x ? U_prev_x_prev_y : tex3D<float>(U_in, xIndex + 1, yIndex - 1, zIndex),
+        U,
+        last_z ? U_prev_y_prev_z : tex3D<float>(U_in, xIndex, yIndex - 1, zIndex + 1)};
     dualPD3D(U_values, &P1_prev_y, &P2_prev_y, &P3_prev_y, sigma, methodTV);
   }
 
   if (zIndex > 0)
   {
-    U_values[0] = U_prev_z;
-    U_values[1] = last_x ? U_prev_x_prev_z : U_in[index + xStride - zStride];
-    U_values[2] = last_y ? U_prev_y_prev_z : U_in[index + yStride - zStride];
-    U_values[3] = U;
+    float U_values[4] = {
+        U_prev_z,
+        last_x ? U_prev_x_prev_z : tex3D<float>(U_in, xIndex + 1, yIndex, zIndex - 1),
+        last_y ? U_prev_y_prev_z : tex3D<float>(U_in, xIndex, yIndex + 1, zIndex - 1),
+        U};
     dualPD3D(U_values, &P1_prev_z, &P2_prev_z, &P3_prev_z, sigma, methodTV);
   }
 

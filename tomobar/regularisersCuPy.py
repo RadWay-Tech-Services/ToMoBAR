@@ -4,6 +4,7 @@ instantiate a proximal operator for iterative methods.
 
 import cupy as cp
 from typing import Optional
+from dataclasses import dataclass
 from tomobar.cuda_kernels import load_cuda_module
 
 try:
@@ -58,7 +59,7 @@ def prox_regul(self, X: cp.ndarray, _regularisation_: dict) -> cp.ndarray:
             _regularisation_["PD_LipschitzConstant"],
             self.Atools.device_index,
         )
-    elif  "PD_TV_separate_p_fused" == _regularisation_["method"]:
+    elif "PD_TV_separate_p_fused" == _regularisation_["method"]:
         X_prox = PD_TV_cupy_separate_p(
             X,
             _regularisation_["regul_param"],
@@ -97,6 +98,36 @@ def PD_TV_cupy(
     Returns:
         cp.ndarray: PD-TV filtered CuPy array.
     """
+
+    @dataclass
+    class Texture:
+        array: cp.cuda.texture.CUDAarray
+        object: cp.cuda.texture.TextureObject
+
+    def create_texture(shape) -> Texture:
+        channel_descriptor = cp.cuda.texture.ChannelFormatDescriptor(
+            32, 0, 0, 0, cp.cuda.runtime.cudaChannelFormatKindFloat
+        )
+        texture_array = cp.cuda.texture.CUDAarray(
+            channel_descriptor, shape[2], shape[1], shape[0]
+        )
+        resource_descriptor = cp.cuda.texture.ResourceDescriptor(
+            cp.cuda.runtime.cudaResourceTypeArray, cuArr=texture_array
+        )
+        texture_descriptor = cp.cuda.texture.TextureDescriptor(
+            (
+                cp.cuda.runtime.cudaAddressModeClamp,
+                cp.cuda.runtime.cudaAddressModeClamp,
+            ),
+            cp.cuda.runtime.cudaFilterModePoint,
+            cp.cuda.runtime.cudaReadModeElementType,
+        )
+
+        texture_object = cp.cuda.texture.TextureObject(
+            resource_descriptor, texture_descriptor
+        )
+        return Texture(texture_array, texture_object)
+
     if gpu_id >= 0:
         cp.cuda.Device(gpu_id).use()
     else:
@@ -118,8 +149,12 @@ def PD_TV_cupy(
 
     # initialise CuPy arrays here:
     U_arrays = [data.copy(), cp.zeros(data.shape, dtype=cp.float32, order="C")]
+    U_texture = create_texture(data.shape)
+
     P1_arrays = [cp.zeros(data.shape, dtype=cp.float32, order="C") for _ in range(2)]
     P2_arrays = [cp.zeros(data.shape, dtype=cp.float32, order="C") for _ in range(2)]
+    P1_texture = create_texture(data.shape)
+    P2_texture = create_texture(data.shape)
 
     # loading and compiling CUDA kernels:
     module = load_cuda_module("primal_dual_for_total_variation")
@@ -128,6 +163,7 @@ def PD_TV_cupy(
         P3_arrays = [
             cp.zeros(data.shape, dtype=cp.float32, order="C") for _ in range(2)
         ]
+        P3_texture = create_texture(data.shape)
         dz, dy, dx = data.shape
         # setting grid/block parameters
         block_x = 128
@@ -153,18 +189,25 @@ def PD_TV_cupy(
         )
 
     # perform algorithm iterations
+    input_index = 0
+    output_index = 1
     for iter in range(iterations):
         if data3d:
+            U_texture.array.copy_from(U_arrays[input_index])
+            P1_texture.array.copy_from(P1_arrays[input_index])
+            P2_texture.array.copy_from(P2_arrays[input_index])
+            P3_texture.array.copy_from(P3_arrays[input_index])
+
             params = (
                 data,
-                U_arrays[iter % 2],
-                U_arrays[(iter + 1) % 2],
-                P1_arrays[iter % 2],
-                P2_arrays[iter % 2],
-                P3_arrays[iter % 2],
-                P1_arrays[(iter + 1) % 2],
-                P2_arrays[(iter + 1) % 2],
-                P3_arrays[(iter + 1) % 2],
+                U_texture.object,
+                U_arrays[output_index],
+                P1_texture.object,
+                P2_texture.object,
+                P3_texture.object,
+                P1_arrays[output_index],
+                P2_arrays[output_index],
+                P3_arrays[output_index],
                 sigma,
                 tau,
                 lt,
@@ -179,6 +222,9 @@ def PD_TV_cupy(
             params = ()
 
         primal_dual_for_total_variation(grid_dims, block_dims, params)
+
+        input_index = 1 - input_index
+        output_index = 1 - output_index
 
     return U_arrays[iterations % 2]
 
