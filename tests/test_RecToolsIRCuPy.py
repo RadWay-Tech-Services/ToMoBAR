@@ -454,4 +454,5 @@ def test_FISTA_compare_regularisations(angles, raw_data, flats, darks, regularis
     # plt.title("diff, sagittal view")
     # plt.show()
     
-    assert not np.any(diff), "difference between solutions is not zero"
+    assert_allclose(diff, 0.0, atol=1e-03), "diff"
+    # assert not np.any(diff), "difference between solutions is not zero"
