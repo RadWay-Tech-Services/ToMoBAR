@@ -58,7 +58,7 @@ def prox_regul(self, X: cp.ndarray, _regularisation_: dict) -> cp.ndarray:
             _regularisation_["PD_LipschitzConstant"],
             self.Atools.device_index,
         )
-    elif  "PD_TV_separate_p_fused" == _regularisation_["method"]:
+    elif "PD_TV_separate_p_fused" == _regularisation_["method"]:
         X_prox = PD_TV_cupy_separate_p(
             X,
             _regularisation_["regul_param"],
@@ -121,8 +121,10 @@ def PD_TV_cupy(
     P1_arrays = [cp.zeros(data.shape, dtype=cp.float16, order="C") for _ in range(2)]
     P2_arrays = [cp.zeros(data.shape, dtype=cp.float16, order="C") for _ in range(2)]
 
+    items_per_thread = 16
     # loading and compiling CUDA kernels:
-    module = load_cuda_module("primal_dual_for_total_variation")
+    name_expressions = [f"primal_dual_for_total_variation_3D<{items_per_thread}>"]
+    module = load_cuda_module("primal_dual_for_total_variation", name_expressions)
     if data.ndim == 3:
         data3d = True
         P3_arrays = [
@@ -132,13 +134,11 @@ def PD_TV_cupy(
         # setting grid/block parameters
         block_x = 128
         block_dims = (block_x, 1, 1)
-        grid_x = (dx + block_x - 1) // block_x
+        grid_x = (dx + block_x * items_per_thread - 1) // (block_x * items_per_thread)
         grid_y = dy
         grid_z = dz
         grid_dims = (grid_x, grid_y, grid_z)
-        primal_dual_for_total_variation = module.get_function(
-            "primal_dual_for_total_variation_3D"
-        )
+        primal_dual_for_total_variation = module.get_function(name_expressions[0])
     else:
         data3d = False
         dy, dx = data.shape
@@ -174,6 +174,7 @@ def PD_TV_cupy(
                 dz,
                 nonneg,
                 methodTV,
+                items_per_thread,
             )
         else:
             params = ()

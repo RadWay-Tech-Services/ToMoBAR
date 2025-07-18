@@ -65,145 +65,203 @@ __device__ float DivProj3D(float Input, float U_in, float P1, float P2, float P3
   return (U_in - tau * div_var + lt * Input) / (1.0f + lt);
 }
 
-extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, float *U_out, __half *P1_in, __half *P2_in, __half *P3_in, __half *P1_out, __half *P2_out, __half *P3_out, float sigma, float tau, float lt, float theta, int dimX, int dimY, int dimZ, int nonneg, int methodTV)
+template <int items_per_thread>
+__global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, float *U_out, __half *P1_in, __half *P2_in, __half *P3_in, __half *P1_out, __half *P2_out, __half *P3_out, float sigma, float tau, float lt, float theta, int dimX, int dimY, int dimZ, int nonneg, int methodTV)
 {
   // calculate each thread global index
-  const long xIndex = blockIdx.x * blockDim.x + threadIdx.x;
+  const long base_xIndex = blockIdx.x * blockDim.x + threadIdx.x * items_per_thread;
   const long yIndex = blockIdx.y * blockDim.y + threadIdx.y;
   const long zIndex = blockIdx.z * blockDim.z + threadIdx.z;
 
-  if (xIndex >= dimX || yIndex >= dimY || zIndex >= dimZ)
+  float Input_value[items_per_thread];
+  float U[items_per_thread];
+  float P1[items_per_thread];
+  float P2[items_per_thread];
+  float P3[items_per_thread];
+
+  float P1_prev_x[items_per_thread];
+  float P1_prev_y[items_per_thread];
+  float P1_prev_z[items_per_thread];
+
+  float P2_prev_x[items_per_thread];
+  float P2_prev_y[items_per_thread];
+  float P2_prev_z[items_per_thread];
+
+  float P3_prev_x[items_per_thread];
+  float P3_prev_y[items_per_thread];
+  float P3_prev_z[items_per_thread];
+
+  float U_values[4 * 4 * items_per_thread];
+
+  for (int i = 0; i < items_per_thread; i++)
   {
-    return;
+    long xIndex = base_xIndex + i;
+    if (xIndex >= dimX || yIndex >= dimY || zIndex >= dimZ)
+    {
+      return;
+    }
+
+    long long xStride = 1;
+    long long yStride = dimX;
+    long long zStride = dimX * dimY;
+
+    long long index = static_cast<long long>(xIndex) + yStride * static_cast<long long>(yIndex) + zStride * static_cast<long long>(zIndex);
+    long long index_prev_x = index - xStride;
+    long long index_prev_y = index - yStride;
+    long long index_prev_z = index - zStride;
+
+    P1_prev_x[i] = 0.0f;
+    P2_prev_x[i] = 0.0f;
+    P3_prev_x[i] = 0.0f;
+    float U_prev_x = 0.0f;
+
+    P1_prev_y[i] = 0.0f;
+    P2_prev_y[i] = 0.0f;
+    P3_prev_y[i] = 0.0f;
+    float U_prev_y = 0.0f;
+
+    P1_prev_z[i] = 0.0f;
+    P2_prev_z[i] = 0.0f;
+    P3_prev_z[i] = 0.0f;
+    float U_prev_z = 0.0f;
+
+    float U_prev_x_prev_y = 0.0;
+    float U_prev_x_prev_z = 0.0f;
+    float U_prev_y_prev_z = 0.0f;
+
+    P1[i] = __half2float(P1_in[index]);
+    P2[i] = __half2float(P2_in[index]);
+    P3[i] = __half2float(P3_in[index]);
+    U[i] = U_in[index];
+    Input_value[i] = Input[index];
+
+    if (xIndex > 0)
+    {
+      P1_prev_x[i] = __half2float(P1_in[index_prev_x]);
+      P2_prev_x[i] = __half2float(P2_in[index_prev_x]);
+      P3_prev_x[i] = __half2float(P3_in[index_prev_x]);
+      U_prev_x = U_in[index_prev_x];
+    }
+
+    if (yIndex > 0)
+    {
+      P1_prev_y[i] = __half2float(P1_in[index_prev_y]);
+      P2_prev_y[i] = __half2float(P2_in[index_prev_y]);
+      P3_prev_y[i] = __half2float(P3_in[index_prev_y]);
+      U_prev_y = U_in[index_prev_y];
+    }
+
+    if (zIndex > 0)
+    {
+      P1_prev_z[i] = __half2float(P1_in[index_prev_z]);
+      P2_prev_z[i] = __half2float(P2_in[index_prev_z]);
+      P3_prev_z[i] = __half2float(P3_in[index_prev_z]);
+      U_prev_z = U_in[index_prev_z];
+    }
+
+    bool last_x = xIndex == dimX - 1;
+    bool last_y = yIndex == dimY - 1;
+    bool last_z = zIndex == dimZ - 1;
+
+    if (((xIndex > 0) && last_y) || ((yIndex > 0) && last_x))
+    {
+      U_prev_x_prev_y = U_in[index - xStride - yStride];
+    }
+
+    if (((xIndex > 0) && last_z) || ((zIndex > 0) && last_x))
+    {
+      U_prev_x_prev_z = U_in[index - xStride - zStride];
+    }
+
+    if (((yIndex > 0) && last_z) || ((zIndex > 0) && last_y))
+    {
+      U_prev_y_prev_z = U_in[index - yStride - zStride];
+    }
+
+    U_values[0 + 4 * 0 + 4 * items_per_thread * i] = U[i];
+    U_values[1 + 4 * 0 + 4 * items_per_thread * i] = last_x ? U_prev_x : U_in[index + xStride];
+    U_values[2 + 4 * 0 + 4 * items_per_thread * i] = last_y ? U_prev_y : U_in[index + yStride];
+    U_values[3 + 4 * 0 + 4 * items_per_thread * i] = last_z ? U_prev_z : U_in[index + zStride];
+
+    if (xIndex > 0)
+    {
+      U_values[0 + 4 * 1 + 4 * items_per_thread * i] = U_prev_x;
+      U_values[1 + 4 * 1 + 4 * items_per_thread * i] = U[i];
+      U_values[2 + 4 * 1 + 4 * items_per_thread * i] = last_y ? U_prev_x_prev_y : U_in[index - xStride + yStride];
+      U_values[3 + 4 * 1 + 4 * items_per_thread * i] = last_z ? U_prev_x_prev_z : U_in[index - xStride + zStride];
+    }
+
+    if (yIndex > 0)
+    {
+      U_values[0 + 4 * 2 + 4 * items_per_thread * i] = U_prev_y;
+      U_values[1 + 4 * 2 + 4 * items_per_thread * i] = last_x ? U_prev_x_prev_y : U_in[index + xStride - yStride];
+      U_values[2 + 4 * 2 + 4 * items_per_thread * i] = U[i];
+      U_values[3 + 4 * 2 + 4 * items_per_thread * i] = last_z ? U_prev_y_prev_z : U_in[index - yStride + zStride];
+    }
+
+    if (zIndex > 0)
+    {
+      U_values[0 + 4 * 3 + 4 * items_per_thread * i] = U_prev_z;
+      U_values[1 + 4 * 3 + 4 * items_per_thread * i] = last_x ? U_prev_x_prev_z : U_in[index + xStride - zStride];
+      U_values[2 + 4 * 3 + 4 * items_per_thread * i] = last_y ? U_prev_y_prev_z : U_in[index + yStride - zStride];
+      U_values[3 + 4 * 3 + 4 * items_per_thread * i] = U[i];
+    }
   }
 
-  long long xStride = 1;
-  long long yStride = dimX;
-  long long zStride = dimX * dimY;
-
-  long long index = static_cast<long long>(xIndex) + yStride * static_cast<long long>(yIndex) + zStride * static_cast<long long>(zIndex);
-  long long index_prev_x = index - xStride;
-  long long index_prev_y = index - yStride;
-  long long index_prev_z = index - zStride;
-
-  float P1_prev_x = 0.0f;
-  float P2_prev_x = 0.0f;
-  float P3_prev_x = 0.0f;
-  float U_prev_x = 0.0f;
-
-  float P1_prev_y = 0.0f;
-  float P2_prev_y = 0.0f;
-  float P3_prev_y = 0.0f;
-  float U_prev_y = 0.0f;
-
-  float P1_prev_z = 0.0f;
-  float P2_prev_z = 0.0f;
-  float P3_prev_z = 0.0f;
-  float U_prev_z = 0.0f;
-
-  float U_prev_x_prev_y = 0.0;
-  float U_prev_x_prev_z = 0.0f;
-  float U_prev_y_prev_z = 0.0f;
-
-  float P1 = P1_in[index];
-  float P2 = P2_in[index];
-  float P3 = P3_in[index];
-  float U = U_in[index];
-  float Input_value = Input[index];
-
-  if (xIndex > 0)
+  float new_U[items_per_thread];
+  for (int i = 0; i < items_per_thread; i++)
   {
-    P1_prev_x = __half2float(P1_in[index_prev_x]);
-    P2_prev_x = __half2float(P2_in[index_prev_x]);
-    P3_prev_x = __half2float(P3_in[index_prev_x]);
-    U_prev_x = U_in[index_prev_x];
+    long xIndex = base_xIndex + i;
+    if (xIndex >= dimX || yIndex >= dimY || zIndex >= dimZ)
+    {
+      return;
+    }
+
+    dualPD3D(&U_values[4 * 0 + 4 * items_per_thread * i], &P1[i], &P2[i], &P3[i], sigma, methodTV);
+
+    if (xIndex > 0)
+    {
+      dualPD3D(&U_values[4 * 1 + 4 * items_per_thread * i], &P1_prev_x[i], &P2_prev_x[i], &P3_prev_x[i], sigma, methodTV);
+    }
+
+    if (yIndex > 0)
+    {
+      dualPD3D(&U_values[4 * 2 + 4 * items_per_thread * i], &P1_prev_y[i], &P2_prev_y[i], &P3_prev_y[i], sigma, methodTV);
+    }
+
+    if (zIndex > 0)
+    {
+      dualPD3D(&U_values[4 * 3 + 4 * items_per_thread * i], &P1_prev_z[i], &P2_prev_z[i], &P3_prev_z[i], sigma, methodTV);
+    }
+
+    if (nonneg != 0 && U[i] < 0.0f)
+    {
+      U[i] = 0.0f;
+    }
+
+    new_U[i] = DivProj3D(Input_value[i], U[i], P1[i], P2[i], P3[i], P1_prev_x[i], P2_prev_y[i], P3_prev_z[i], tau, lt);
+    new_U[i] = new_U[i] + theta * (new_U[i] - U[i]);
   }
 
-  if (yIndex > 0)
+  for (int i = 0; i < items_per_thread; i++)
   {
-    P1_prev_y = __half2float(P1_in[index_prev_y]);
-    P2_prev_y = __half2float(P2_in[index_prev_y]);
-    P3_prev_y = __half2float(P3_in[index_prev_y]);
-    U_prev_y = U_in[index_prev_y];
+    long xIndex = base_xIndex + i;
+    if (xIndex >= dimX || yIndex >= dimY || zIndex >= dimZ)
+    {
+      return;
+    }
+
+    long long yStride = dimX;
+    long long zStride = dimX * dimY;
+
+    long long index = static_cast<long long>(xIndex) + yStride * static_cast<long long>(yIndex) + zStride * static_cast<long long>(zIndex);
+
+    U_out[index] = new_U[i];
+
+    P1_out[index] = __float2half(P1[i]);
+    P2_out[index] = __float2half(P2[i]);
+    P3_out[index] = __float2half(P3[i]);
   }
-
-  if (zIndex > 0)
-  {
-    P1_prev_z = __half2float(P1_in[index_prev_z]);
-    P2_prev_z = __half2float(P2_in[index_prev_z]);
-    P3_prev_z = __half2float(P3_in[index_prev_z]);
-    U_prev_z = U_in[index_prev_z];
-  }
-
-  bool last_x = xIndex == dimX - 1;
-  bool last_y = yIndex == dimY - 1;
-  bool last_z = zIndex == dimZ - 1;
-
-  if (((xIndex > 0) && last_y) || ((yIndex > 0) && last_x))
-  {
-    U_prev_x_prev_y = U_in[index - xStride - yStride];
-  }
-
-  if (((xIndex > 0) && last_z) || ((zIndex > 0) && last_x))
-  {
-    U_prev_x_prev_z = U_in[index - xStride - zStride];
-  }
-
-  if (((yIndex > 0) && last_z) || ((zIndex > 0) && last_y))
-  {
-    U_prev_y_prev_z = U_in[index - yStride - zStride];
-  }
-
-  {
-    float U_values[4] = {
-        U,
-        last_x ? U_prev_x : U_in[index + xStride],
-        last_y ? U_prev_y : U_in[index + yStride],
-        last_z ? U_prev_z : U_in[index + zStride]};
-    dualPD3D(U_values, &P1, &P2, &P3, sigma, methodTV);
-  }
-
-  if (xIndex > 0)
-  {
-    float U_values[4] = {
-        U_prev_x,
-        U,
-        last_y ? U_prev_x_prev_y : U_in[index - xStride + yStride],
-        last_z ? U_prev_x_prev_z : U_in[index - xStride + zStride]};
-    dualPD3D(U_values, &P1_prev_x, &P2_prev_x, &P3_prev_x, sigma, methodTV);
-  }
-
-  if (yIndex > 0)
-  {
-    float U_values[4] = {
-        U_prev_y,
-        last_x ? U_prev_x_prev_y : U_in[index + xStride - yStride],
-        U,
-        last_z ? U_prev_y_prev_z : U_in[index - yStride + zStride]};
-    dualPD3D(U_values, &P1_prev_y, &P2_prev_y, &P3_prev_y, sigma, methodTV);
-  }
-
-  if (zIndex > 0)
-  {
-    float U_values[4] = {
-        U_prev_z,
-        last_x ? U_prev_x_prev_z : U_in[index + xStride - zStride],
-        last_y ? U_prev_y_prev_z : U_in[index + yStride - zStride],
-        U};
-    dualPD3D(U_values, &P1_prev_z, &P2_prev_z, &P3_prev_z, sigma, methodTV);
-  }
-
-  if (nonneg != 0 && U < 0.0f)
-  {
-    U = 0.0f;
-  }
-
-  float new_U = DivProj3D(Input_value, U, P1, P2, P3, P1_prev_x, P2_prev_y, P3_prev_z, tau, lt);
-  U_out[index] = new_U + theta * (new_U - U);
-
-  P1_out[index] = __float2half(P1);
-  P2_out[index] = __float2half(P2);
-  P3_out[index] = __float2half(P3);
 }
 
 /************************************************/
