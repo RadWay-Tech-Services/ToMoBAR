@@ -105,9 +105,9 @@ extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, floa
   float U_prev_x_prev_z = 0.0f;
   float U_prev_y_prev_z = 0.0f;
 
-  float P1 = P1_in[index];
-  float P2 = P2_in[index];
-  float P3 = P3_in[index];
+  float P1 = __half2float(P1_in[index]);
+  float P2 = __half2float(P2_in[index]);
+  float P3 = __half2float(P3_in[index]);
   float U = U_in[index];
   float Input_value = Input[index];
 
