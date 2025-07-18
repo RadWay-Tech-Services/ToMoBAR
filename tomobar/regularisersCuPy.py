@@ -100,33 +100,26 @@ def PD_TV_cupy(
     """
 
     @dataclass
-    class Texture:
+    class Surface:
         array: cp.cuda.texture.CUDAarray
-        object: cp.cuda.texture.TextureObject
+        object: cp.cuda.texture.SurfaceObject
 
-    def create_texture(shape) -> Texture:
+    def create_surface(shape) -> Surface:
         channel_descriptor = cp.cuda.texture.ChannelFormatDescriptor(
             32, 0, 0, 0, cp.cuda.runtime.cudaChannelFormatKindFloat
         )
-        texture_array = cp.cuda.texture.CUDAarray(
-            channel_descriptor, shape[2], shape[1], shape[0]
+        array = cp.cuda.texture.CUDAarray(
+            channel_descriptor,
+            shape[2],
+            shape[1],
+            shape[0],
+            cp.cuda.runtime.cudaArraySurfaceLoadStore,
         )
         resource_descriptor = cp.cuda.texture.ResourceDescriptor(
-            cp.cuda.runtime.cudaResourceTypeArray, cuArr=texture_array
+            cp.cuda.runtime.cudaResourceTypeArray, cuArr=array
         )
-        texture_descriptor = cp.cuda.texture.TextureDescriptor(
-            (
-                cp.cuda.runtime.cudaAddressModeClamp,
-                cp.cuda.runtime.cudaAddressModeClamp,
-            ),
-            cp.cuda.runtime.cudaFilterModePoint,
-            cp.cuda.runtime.cudaReadModeElementType,
-        )
-
-        texture_object = cp.cuda.texture.TextureObject(
-            resource_descriptor, texture_descriptor
-        )
-        return Texture(texture_array, texture_object)
+        surface = cp.cuda.texture.SurfaceObject(resource_descriptor)
+        return Surface(array, surface)
 
     if gpu_id >= 0:
         cp.cuda.Device(gpu_id).use()
@@ -148,22 +141,15 @@ def PD_TV_cupy(
     lt = cp.float32(tau / regularisation_parameter)
 
     # initialise CuPy arrays here:
-    U_arrays = [data.copy(), cp.zeros(data.shape, dtype=cp.float32, order="C")]
-    U_texture = create_texture(data.shape)
-
-    P1_arrays = [cp.zeros(data.shape, dtype=cp.float32, order="C") for _ in range(2)]
-    P2_arrays = [cp.zeros(data.shape, dtype=cp.float32, order="C") for _ in range(2)]
-    P1_texture = create_texture(data.shape)
-    P2_texture = create_texture(data.shape)
+    U_surfaces = [create_surface(data.shape) for _ in range(2)]
+    P1_surfaces = [create_surface(data.shape) for _ in range(2)]
+    P2_surfaces = [create_surface(data.shape) for _ in range(2)]
 
     # loading and compiling CUDA kernels:
     module = load_cuda_module("primal_dual_for_total_variation")
     if data.ndim == 3:
         data3d = True
-        P3_arrays = [
-            cp.zeros(data.shape, dtype=cp.float32, order="C") for _ in range(2)
-        ]
-        P3_texture = create_texture(data.shape)
+        P3_surfaces = [create_surface(data.shape) for _ in range(2)]
         dz, dy, dx = data.shape
         # setting grid/block parameters
         block_x = 128
@@ -191,23 +177,21 @@ def PD_TV_cupy(
     # perform algorithm iterations
     input_index = 0
     output_index = 1
-    for iter in range(iterations):
-        if data3d:
-            U_texture.array.copy_from(U_arrays[input_index])
-            P1_texture.array.copy_from(P1_arrays[input_index])
-            P2_texture.array.copy_from(P2_arrays[input_index])
-            P3_texture.array.copy_from(P3_arrays[input_index])
 
+    U_surfaces[input_index].array.copy_from(data)
+
+    for _ in range(iterations):
+        if data3d:
             params = (
                 data,
-                U_texture.object,
-                U_arrays[output_index],
-                P1_texture.object,
-                P2_texture.object,
-                P3_texture.object,
-                P1_arrays[output_index],
-                P2_arrays[output_index],
-                P3_arrays[output_index],
+                U_surfaces[input_index].object,
+                U_surfaces[output_index].object,
+                P1_surfaces[input_index].object,
+                P2_surfaces[input_index].object,
+                P3_surfaces[input_index].object,
+                P1_surfaces[output_index].object,
+                P2_surfaces[output_index].object,
+                P3_surfaces[output_index].object,
                 sigma,
                 tau,
                 lt,
@@ -226,7 +210,9 @@ def PD_TV_cupy(
         input_index = 1 - input_index
         output_index = 1 - output_index
 
-    return U_arrays[iterations % 2]
+    U_out = cp.empty(data.shape, dtype=cp.float32, order="C")
+    U_surfaces[input_index].array.copy_to(U_out)
+    return U_out
 
 
 def PD_TV_cupy_separate_p(

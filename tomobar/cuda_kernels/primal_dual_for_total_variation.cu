@@ -64,7 +64,12 @@ __device__ float DivProj3D(float *Input, float U_in, float P1, float P2, float P
   return (U_in - tau * div_var + lt * Input[index]) / (1.0f + lt);
 }
 
-extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, cudaTextureObject_t U_in, float *U_out, cudaTextureObject_t P1_in, cudaTextureObject_t P2_in, cudaTextureObject_t P3_in, float *P1_out, float *P2_out, float *P3_out, float sigma, float tau, float lt, float theta, int dimX, int dimY, int dimZ, int nonneg, int methodTV)
+extern "C" __global__ void primal_dual_for_total_variation_3D(
+  float *Input,
+  cudaSurfaceObject_t U_in, cudaSurfaceObject_t U_out,
+  cudaSurfaceObject_t P1_in, cudaSurfaceObject_t P2_in, cudaSurfaceObject_t P3_in,
+  cudaSurfaceObject_t P1_out, cudaSurfaceObject_t P2_out, cudaSurfaceObject_t P3_out,
+  float sigma, float tau, float lt, float theta, int dimX, int dimY, int dimZ, int nonneg, int methodTV)
 {
   // calculate each thread global index
   const long xIndex = blockIdx.x * blockDim.x + threadIdx.x;
@@ -104,33 +109,33 @@ extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, cuda
   float U_prev_x_prev_z = 0.0f;
   float U_prev_y_prev_z = 0.0f;
 
-  float P1 = tex3D<float>(P1_in, xIndex, yIndex, zIndex);
-  float P2 = tex3D<float>(P2_in, xIndex, yIndex, zIndex);
-  float P3 = tex3D<float>(P3_in, xIndex, yIndex, zIndex);
-  float U = tex3D<float>(U_in, xIndex, yIndex, zIndex);
+  float P1 = surf3Dread<float>(P1_in, xIndex, yIndex, zIndex);
+  float P2 = surf3Dread<float>(P2_in, xIndex, yIndex, zIndex);
+  float P3 = surf3Dread<float>(P3_in, xIndex, yIndex, zIndex);
+  float U = surf3Dread<float>(U_in, xIndex, yIndex, zIndex);
 
   if (xIndex > 0)
   {
-    P1_prev_x = tex3D<float>(P1_in, xIndex - 1, yIndex, zIndex);
-    P2_prev_x = tex3D<float>(P2_in, xIndex - 1, yIndex, zIndex);
-    P3_prev_x = tex3D<float>(P3_in, xIndex - 1, yIndex, zIndex);
-    U_prev_x = tex3D<float>(U_in, xIndex - 1, yIndex, zIndex);
+    P1_prev_x = surf3Dread<float>(P1_in, xIndex - 1, yIndex, zIndex);
+    P2_prev_x = surf3Dread<float>(P2_in, xIndex - 1, yIndex, zIndex);
+    P3_prev_x = surf3Dread<float>(P3_in, xIndex - 1, yIndex, zIndex);
+    U_prev_x = surf3Dread<float>(U_in, xIndex - 1, yIndex, zIndex);
   }
 
   if (yIndex > 0)
   {
-    P1_prev_y = tex3D<float>(P1_in, xIndex, yIndex - 1, zIndex);
-    P2_prev_y = tex3D<float>(P2_in, xIndex, yIndex - 1, zIndex);
-    P3_prev_y = tex3D<float>(P3_in, xIndex, yIndex - 1, zIndex);
-    U_prev_y = tex3D<float>(U_in, xIndex, yIndex - 1, zIndex);
+    P1_prev_y = surf3Dread<float>(P1_in, xIndex, yIndex - 1, zIndex);
+    P2_prev_y = surf3Dread<float>(P2_in, xIndex, yIndex - 1, zIndex);
+    P3_prev_y = surf3Dread<float>(P3_in, xIndex, yIndex - 1, zIndex);
+    U_prev_y = surf3Dread<float>(U_in, xIndex, yIndex - 1, zIndex);
   }
 
   if (zIndex > 0)
   {
-    P1_prev_z = tex3D<float>(P1_in, xIndex, yIndex, zIndex - 1);
-    P2_prev_z = tex3D<float>(P2_in, xIndex, yIndex, zIndex - 1);
-    P3_prev_z = tex3D<float>(P3_in, xIndex, yIndex, zIndex - 1);
-    U_prev_z = tex3D<float>(U_in, xIndex, yIndex, zIndex - 1);
+    P1_prev_z = surf3Dread<float>(P1_in, xIndex, yIndex, zIndex - 1);
+    P2_prev_z = surf3Dread<float>(P2_in, xIndex, yIndex, zIndex - 1);
+    P3_prev_z = surf3Dread<float>(P3_in, xIndex, yIndex, zIndex - 1);
+    U_prev_z = surf3Dread<float>(U_in, xIndex, yIndex, zIndex - 1);
   }
 
   bool last_x = xIndex == dimX - 1;
@@ -139,25 +144,25 @@ extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, cuda
 
   if (((xIndex > 0) && last_y) || ((yIndex > 0) && last_x))
   {
-    U_prev_x_prev_y = tex3D<float>(U_in, xIndex - 1, yIndex - 1, zIndex);
+    U_prev_x_prev_y = surf3Dread<float>(U_in, xIndex - 1, yIndex - 1, zIndex);
   }
 
   if (((xIndex > 0) && last_z) || ((zIndex > 0) && last_x))
   {
-    U_prev_x_prev_z = tex3D<float>(U_in, xIndex - 1, yIndex, zIndex - 1);
+    U_prev_x_prev_z = surf3Dread<float>(U_in, xIndex - 1, yIndex, zIndex - 1);
   }
 
   if (((yIndex > 0) && last_z) || ((zIndex > 0) && last_y))
   {
-    U_prev_y_prev_z = tex3D<float>(U_in, xIndex, yIndex - 1, zIndex - 1);
+    U_prev_y_prev_z = surf3Dread<float>(U_in, xIndex, yIndex - 1, zIndex - 1);
   }
 
   {
     float U_values[4] = {
         U,
-        last_x ? U_prev_x : tex3D<float>(U_in, xIndex + 1, yIndex, zIndex),
-        last_y ? U_prev_y : tex3D<float>(U_in, xIndex, yIndex + 1, zIndex),
-        last_z ? U_prev_z : tex3D<float>(U_in, xIndex, yIndex, zIndex + 1)};
+        last_x ? U_prev_x : surf3Dread<float>(U_in, xIndex + 1, yIndex, zIndex),
+        last_y ? U_prev_y : surf3Dread<float>(U_in, xIndex, yIndex + 1, zIndex),
+        last_z ? U_prev_z : surf3Dread<float>(U_in, xIndex, yIndex, zIndex + 1)};
     dualPD3D(U_values, &P1, &P2, &P3, sigma, methodTV);
   }
 
@@ -166,8 +171,8 @@ extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, cuda
     float U_values[4] = {
         U_prev_x,
         U,
-        last_y ? U_prev_x_prev_y : tex3D<float>(U_in, xIndex - 1, yIndex + 1, zIndex),
-        last_z ? U_prev_x_prev_z : tex3D<float>(U_in, xIndex - 1, yIndex, zIndex + 1)};
+        last_y ? U_prev_x_prev_y : surf3Dread<float>(U_in, xIndex - 1, yIndex + 1, zIndex),
+        last_z ? U_prev_x_prev_z : surf3Dread<float>(U_in, xIndex - 1, yIndex, zIndex + 1)};
     dualPD3D(U_values, &P1_prev_x, &P2_prev_x, &P3_prev_x, sigma, methodTV);
   }
 
@@ -175,9 +180,9 @@ extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, cuda
   {
     float U_values[4] = {
         U_prev_y,
-        last_x ? U_prev_x_prev_y : tex3D<float>(U_in, xIndex + 1, yIndex - 1, zIndex),
+        last_x ? U_prev_x_prev_y : surf3Dread<float>(U_in, xIndex + 1, yIndex - 1, zIndex),
         U,
-        last_z ? U_prev_y_prev_z : tex3D<float>(U_in, xIndex, yIndex - 1, zIndex + 1)};
+        last_z ? U_prev_y_prev_z : surf3Dread<float>(U_in, xIndex, yIndex - 1, zIndex + 1)};
     dualPD3D(U_values, &P1_prev_y, &P2_prev_y, &P3_prev_y, sigma, methodTV);
   }
 
@@ -185,8 +190,8 @@ extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, cuda
   {
     float U_values[4] = {
         U_prev_z,
-        last_x ? U_prev_x_prev_z : tex3D<float>(U_in, xIndex + 1, yIndex, zIndex - 1),
-        last_y ? U_prev_y_prev_z : tex3D<float>(U_in, xIndex, yIndex + 1, zIndex - 1),
+        last_x ? U_prev_x_prev_z : surf3Dread<float>(U_in, xIndex + 1, yIndex, zIndex - 1),
+        last_y ? U_prev_y_prev_z : surf3Dread<float>(U_in, xIndex, yIndex + 1, zIndex - 1),
         U};
     dualPD3D(U_values, &P1_prev_z, &P2_prev_z, &P3_prev_z, sigma, methodTV);
   }
@@ -197,11 +202,11 @@ extern "C" __global__ void primal_dual_for_total_variation_3D(float *Input, cuda
   }
 
   float new_U = DivProj3D(Input, U, P1, P2, P3, P1_prev_x, P2_prev_y, P3_prev_z, tau, lt, index);
-  U_out[index] = new_U + theta * (new_U - U);
+  surf3Dwrite<float>(new_U + theta * (new_U - U), U_out, xIndex, yIndex, zIndex);
 
-  P1_out[index] = P1;
-  P2_out[index] = P2;
-  P3_out[index] = P3;
+  surf3Dwrite<float>(P1, P1_out, xIndex, yIndex, zIndex);
+  surf3Dwrite<float>(P2, P2_out, xIndex, yIndex, zIndex);
+  surf3Dwrite<float>(P3, P3_out, xIndex, yIndex, zIndex);
 }
 
 /************************************************/
