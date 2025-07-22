@@ -180,6 +180,12 @@ def PD_TV_cupy(
 
     U_surfaces[input_index].array.copy_from(data)
 
+    zeros = cp.zeros(data.shape, dtype=cp.float32, order="C")
+    U_surfaces[output_index].array.copy_from(zeros)
+    [x.array.copy_from(zeros) for x in P1_surfaces]
+    [x.array.copy_from(zeros) for x in P2_surfaces]
+    [x.array.copy_from(zeros) for x in P3_surfaces]
+
     for _ in range(iterations):
         if data3d:
             params = (
