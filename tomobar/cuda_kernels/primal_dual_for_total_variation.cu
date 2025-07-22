@@ -91,7 +91,10 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
   float P3_prev_y[items_per_thread];
   float P3_prev_z[items_per_thread];
 
-  float U_values[4 * 4 * items_per_thread];
+  float U_values[4 * items_per_thread];
+  float U_values_prev_x[4 * items_per_thread];
+  float U_values_prev_y[4 * items_per_thread];
+  float U_values_prev_z[4 * items_per_thread];
 
   for (int i = 0; i < items_per_thread; i++)
   {
@@ -178,33 +181,33 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
       U_prev_y_prev_z = U_in[index - yStride - zStride];
     }
 
-    U_values[0 + 4 * 0 + 4 * items_per_thread * i] = U[i];
-    U_values[1 + 4 * 0 + 4 * items_per_thread * i] = last_x ? U_prev_x : U_in[index + xStride];
-    U_values[2 + 4 * 0 + 4 * items_per_thread * i] = last_y ? U_prev_y : U_in[index + yStride];
-    U_values[3 + 4 * 0 + 4 * items_per_thread * i] = last_z ? U_prev_z : U_in[index + zStride];
+    U_values[0 + 4 * i] = U[i];
+    U_values[1 + 4 * i] = last_x ? U_prev_x : U_in[index + xStride];
+    U_values[2 + 4 * i] = last_y ? U_prev_y : U_in[index + yStride];
+    U_values[3 + 4 * i] = last_z ? U_prev_z : U_in[index + zStride];
 
     if (xIndex > 0)
     {
-      U_values[0 + 4 * 1 + 4 * items_per_thread * i] = U_prev_x;
-      U_values[1 + 4 * 1 + 4 * items_per_thread * i] = U[i];
-      U_values[2 + 4 * 1 + 4 * items_per_thread * i] = last_y ? U_prev_x_prev_y : U_in[index - xStride + yStride];
-      U_values[3 + 4 * 1 + 4 * items_per_thread * i] = last_z ? U_prev_x_prev_z : U_in[index - xStride + zStride];
+      U_values_prev_x[0 + 4 * i] = U_prev_x;
+      U_values_prev_x[1 + 4 * i] = U[i];
+      U_values_prev_x[2 + 4 * i] = last_y ? U_prev_x_prev_y : U_in[index - xStride + yStride];
+      U_values_prev_x[3 + 4 * i] = last_z ? U_prev_x_prev_z : U_in[index - xStride + zStride];
     }
 
     if (yIndex > 0)
     {
-      U_values[0 + 4 * 2 + 4 * items_per_thread * i] = U_prev_y;
-      U_values[1 + 4 * 2 + 4 * items_per_thread * i] = last_x ? U_prev_x_prev_y : U_in[index + xStride - yStride];
-      U_values[2 + 4 * 2 + 4 * items_per_thread * i] = U[i];
-      U_values[3 + 4 * 2 + 4 * items_per_thread * i] = last_z ? U_prev_y_prev_z : U_in[index - yStride + zStride];
+      U_values_prev_y[0 + 4 * i] = U_prev_y;
+      U_values_prev_y[1 + 4 * i] = last_x ? U_prev_x_prev_y : U_in[index + xStride - yStride];
+      U_values_prev_y[2 + 4 * i] = U[i];
+      U_values_prev_y[3 + 4 * i] = last_z ? U_prev_y_prev_z : U_in[index - yStride + zStride];
     }
 
     if (zIndex > 0)
     {
-      U_values[0 + 4 * 3 + 4 * items_per_thread * i] = U_prev_z;
-      U_values[1 + 4 * 3 + 4 * items_per_thread * i] = last_x ? U_prev_x_prev_z : U_in[index + xStride - zStride];
-      U_values[2 + 4 * 3 + 4 * items_per_thread * i] = last_y ? U_prev_y_prev_z : U_in[index + yStride - zStride];
-      U_values[3 + 4 * 3 + 4 * items_per_thread * i] = U[i];
+      U_values_prev_z[0 + 4 * i] = U_prev_z;
+      U_values_prev_z[1 + 4 * i] = last_x ? U_prev_x_prev_z : U_in[index + xStride - zStride];
+      U_values_prev_z[2 + 4 * i] = last_y ? U_prev_y_prev_z : U_in[index + yStride - zStride];
+      U_values_prev_z[3 + 4 * i] = U[i];
     }
   }
 
@@ -217,21 +220,21 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
       return;
     }
 
-    dualPD3D(&U_values[4 * 0 + 4 * items_per_thread * i], &P1[i], &P2[i], &P3[i], sigma, methodTV);
+    dualPD3D(&U_values[4 * i], &P1[i], &P2[i], &P3[i], sigma, methodTV);
 
     if (xIndex > 0)
     {
-      dualPD3D(&U_values[4 * 1 + 4 * items_per_thread * i], &P1_prev_x[i], &P2_prev_x[i], &P3_prev_x[i], sigma, methodTV);
+      dualPD3D(&U_values_prev_x[4 * i], &P1_prev_x[i], &P2_prev_x[i], &P3_prev_x[i], sigma, methodTV);
     }
 
     if (yIndex > 0)
     {
-      dualPD3D(&U_values[4 * 2 + 4 * items_per_thread * i], &P1_prev_y[i], &P2_prev_y[i], &P3_prev_y[i], sigma, methodTV);
+      dualPD3D(&U_values_prev_y[4 * i], &P1_prev_y[i], &P2_prev_y[i], &P3_prev_y[i], sigma, methodTV);
     }
 
     if (zIndex > 0)
     {
-      dualPD3D(&U_values[4 * 3 + 4 * items_per_thread * i], &P1_prev_z[i], &P2_prev_z[i], &P3_prev_z[i], sigma, methodTV);
+      dualPD3D(&U_values_prev_z[4 * i], &P1_prev_z[i], &P2_prev_z[i], &P3_prev_z[i], sigma, methodTV);
     }
 
     if (nonneg != 0 && U[i] < 0.0f)
@@ -251,10 +254,7 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
       return;
     }
 
-    long long yStride = dimX;
-    long long zStride = dimX * dimY;
-
-    long long index = static_cast<long long>(xIndex) + yStride * static_cast<long long>(yIndex) + zStride * static_cast<long long>(zIndex);
+    long long index = static_cast<long long>(xIndex) + dimX * static_cast<long long>(yIndex) + dimX * dimY * static_cast<long long>(zIndex);
 
     U_out[index] = new_U[i];
 
