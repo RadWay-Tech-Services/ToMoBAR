@@ -121,7 +121,7 @@ def PD_TV_cupy(
     P1_arrays = [cp.zeros(data.shape, dtype=cp.float16, order="C") for _ in range(2)]
     P2_arrays = [cp.zeros(data.shape, dtype=cp.float16, order="C") for _ in range(2)]
 
-    items_per_thread = 2
+    items_per_thread = 4
     # loading and compiling CUDA kernels:
     name_expressions = [f"primal_dual_for_total_variation_3D<{items_per_thread}>"]
     module = load_cuda_module("primal_dual_for_total_variation", name_expressions)
