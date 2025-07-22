@@ -68,10 +68,15 @@ __device__ float DivProj3D(float Input, float U_in, float P1, float P2, float P3
 template <int items_per_thread>
 __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, float *U_out, __half *P1_in, __half *P2_in, __half *P3_in, __half *P1_out, __half *P2_out, __half *P3_out, float sigma, float tau, float lt, float theta, int dimX, int dimY, int dimZ, int nonneg, int methodTV)
 {
-  // calculate each thread global index
-  const long base_xIndex = blockIdx.x * blockDim.x + threadIdx.x * items_per_thread;
   const long yIndex = blockIdx.y * blockDim.y + threadIdx.y;
   const long zIndex = blockIdx.z * blockDim.z + threadIdx.z;
+
+  if (yIndex >= dimY || zIndex >= dimZ)
+  {
+    return;
+  }
+
+  const long base_xIndex = blockIdx.x * blockDim.x + threadIdx.x * items_per_thread;
 
   float Input_value[items_per_thread];
   float U[items_per_thread];
@@ -96,10 +101,11 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
   float U_values_prev_y[4 * items_per_thread];
   float U_values_prev_z[4 * items_per_thread];
 
+#pragma unroll
   for (int i = 0; i < items_per_thread; i++)
   {
     long xIndex = base_xIndex + i;
-    if (xIndex >= dimX || yIndex >= dimY || zIndex >= dimZ)
+    if (xIndex >= dimX)
     {
       return;
     }
@@ -211,31 +217,44 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
     }
   }
 
-  float new_U[items_per_thread];
+#pragma unroll
   for (int i = 0; i < items_per_thread; i++)
   {
     long xIndex = base_xIndex + i;
-    if (xIndex >= dimX || yIndex >= dimY || zIndex >= dimZ)
+    if (xIndex >= dimX)
     {
       return;
     }
-
-    dualPD3D(&U_values[4 * i], &P1[i], &P2[i], &P3[i], sigma, methodTV);
 
     if (xIndex > 0)
     {
       dualPD3D(&U_values_prev_x[4 * i], &P1_prev_x[i], &P2_prev_x[i], &P3_prev_x[i], sigma, methodTV);
     }
+  }
 
-    if (yIndex > 0)
+  if (yIndex > 0)
+  {
+#pragma unroll
+    for (int i = 0; i < items_per_thread; i++)
     {
       dualPD3D(&U_values_prev_y[4 * i], &P1_prev_y[i], &P2_prev_y[i], &P3_prev_y[i], sigma, methodTV);
     }
+  }
 
-    if (zIndex > 0)
+  if (zIndex > 0)
+  {
+#pragma unroll
+    for (int i = 0; i < items_per_thread; i++)
     {
       dualPD3D(&U_values_prev_z[4 * i], &P1_prev_z[i], &P2_prev_z[i], &P3_prev_z[i], sigma, methodTV);
     }
+  }
+
+  float new_U[items_per_thread];
+#pragma unroll
+  for (int i = 0; i < items_per_thread; i++)
+  {
+    dualPD3D(&U_values[4 * i], &P1[i], &P2[i], &P3[i], sigma, methodTV);
 
     if (nonneg != 0 && U[i] < 0.0f)
     {
@@ -246,10 +265,11 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
     new_U[i] = new_U[i] + theta * (new_U[i] - U[i]);
   }
 
+#pragma unroll
   for (int i = 0; i < items_per_thread; i++)
   {
     long xIndex = base_xIndex + i;
-    if (xIndex >= dimX || yIndex >= dimY || zIndex >= dimZ)
+    if (xIndex >= dimX)
     {
       return;
     }
