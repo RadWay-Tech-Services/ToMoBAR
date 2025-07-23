@@ -5,6 +5,7 @@ instantiate a proximal operator for iterative methods.
 import cupy as cp
 from typing import Optional
 from tomobar.cuda_kernels import load_cuda_module
+from dataclasses import dataclass
 
 try:
     from ccpi.filters.regularisersCuPy import (
@@ -58,7 +59,7 @@ def prox_regul(self, X: cp.ndarray, _regularisation_: dict) -> cp.ndarray:
             _regularisation_["PD_LipschitzConstant"],
             self.Atools.device_index,
         )
-    elif  "PD_TV_separate_p_fused" == _regularisation_["method"]:
+    elif "PD_TV_separate_p_fused" == _regularisation_["method"]:
         X_prox = PD_TV_cupy_separate_p(
             X,
             _regularisation_["regul_param"],
@@ -97,6 +98,29 @@ def PD_TV_cupy(
     Returns:
         cp.ndarray: PD-TV filtered CuPy array.
     """
+
+    @dataclass
+    class Surface:
+        array: cp.cuda.texture.CUDAarray
+        surface: cp.cuda.texture.SurfaceObject
+
+    def create_surface(shape) -> Surface:
+        channel_descriptor = cp.cuda.texture.ChannelFormatDescriptor(
+            32, 0, 0, 0, cp.cuda.runtime.cudaChannelFormatKindFloat
+        )
+        array = cp.cuda.texture.CUDAarray(
+            channel_descriptor,
+            shape[2],
+            shape[1],
+            shape[0],
+            cp.cuda.runtime.cudaArraySurfaceLoadStore,
+        )
+        resource_descriptor = cp.cuda.texture.ResourceDescriptor(
+            cp.cuda.runtime.cudaResourceTypeArray, cuArr=array
+        )
+        surface = cp.cuda.texture.SurfaceObject(resource_descriptor)
+        return Surface(array, surface)
+
     if gpu_id >= 0:
         cp.cuda.Device(gpu_id).use()
     else:
@@ -117,7 +141,7 @@ def PD_TV_cupy(
     lt = cp.float32(tau / regularisation_parameter)
 
     # initialise CuPy arrays here:
-    U_arrays = [data.copy(), cp.zeros(data.shape, dtype=cp.float32, order="C")]
+    U_surfaces = [create_surface(data.shape) for _ in range(2)]
     P1_arrays = [cp.zeros(data.shape, dtype=cp.float16, order="C") for _ in range(2)]
     P2_arrays = [cp.zeros(data.shape, dtype=cp.float16, order="C") for _ in range(2)]
 
@@ -153,18 +177,23 @@ def PD_TV_cupy(
         )
 
     # perform algorithm iterations
-    for iter in range(iterations):
+    input_index = 0
+    output_index = 1
+
+    U_surfaces[input_index].array.copy_from(data)
+    U_surfaces[output_index].array.copy_from(cp.zeros(data.shape, dtype=cp.float32, order="C"))
+    for _ in range(iterations):
         if data3d:
             params = (
                 data,
-                U_arrays[iter % 2],
-                U_arrays[(iter + 1) % 2],
-                P1_arrays[iter % 2],
-                P2_arrays[iter % 2],
-                P3_arrays[iter % 2],
-                P1_arrays[(iter + 1) % 2],
-                P2_arrays[(iter + 1) % 2],
-                P3_arrays[(iter + 1) % 2],
+                U_surfaces[input_index].surface,
+                U_surfaces[output_index].surface,
+                P1_arrays[input_index],
+                P2_arrays[input_index],
+                P3_arrays[input_index],
+                P1_arrays[output_index],
+                P2_arrays[output_index],
+                P3_arrays[output_index],
                 sigma,
                 tau,
                 lt,
@@ -180,7 +209,12 @@ def PD_TV_cupy(
 
         primal_dual_for_total_variation(grid_dims, block_dims, params)
 
-    return U_arrays[iterations % 2]
+        input_index = 1 - input_index
+        output_index = 1 - output_index
+
+    U_out = cp.empty(data.shape, dtype=cp.float32, order="C")
+    U_surfaces[input_index].array.copy_to(U_out)
+    return U_out
 
 
 def PD_TV_cupy_separate_p(
