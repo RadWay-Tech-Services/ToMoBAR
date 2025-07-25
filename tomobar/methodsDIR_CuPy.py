@@ -6,21 +6,18 @@
 """
 
 import numpy as np
-import timeit
+import math
 
 try:
     import cupy as xp
 
-    from cupyx.scipy.fft import fftshift, ifftshift, fft, ifft2, rfftfreq, rfft, irfft
-    from cupyx.scipy.interpolate import interpn, RegularGridInterpolator
-    import cupyx
+    from cupyx.scipy.fft import fft, ifft2, rfftfreq, rfft, irfft
 except ImportError:
     import numpy as xp
 
     print(
         "Cupy library is a required dependency for this part of the code, please install"
     )
-
 
 from tomobar.supp.suppTools import check_kwargs
 from tomobar.supp.funcs import _data_dims_swapper
@@ -63,16 +60,6 @@ class RecToolsDIRCuPy(RecToolsDIR):
         )
         # if DetectorsDimV == 0 or DetectorsDimV is None:
         #     raise ValueError("2D CuPy reconstruction is not yet supported, only 3D is")
-
-    @staticmethod
-    def _get_available_gpu_memory() -> int:
-        dev = xp.cuda.Device()
-        # first, let's make some space
-        xp.get_default_memory_pool().free_all_blocks()
-        cache = xp.fft.config.get_plan_cache()
-        cache.clear()
-        available_memory = dev.mem_info[0] + xp.get_default_memory_pool().free_bytes()
-        return int(available_memory * 0.9)  # 10% safety margin
 
     def FORWPROJ(self, data: xp.ndarray, **kwargs) -> xp.ndarray:
         """Module to perform forward projection of 2d/3d data as a cupy array
@@ -177,8 +164,7 @@ class RecToolsDIRCuPy(RecToolsDIR):
         block_dim = [16, 16]
         block_dim_center = [32, 4]
 
-        chunk_count = 1
-        slice_count_per_chunk = None
+        chunk_count = 4
 
         for key, value in kwargs.items():
             if key == "data_axes_labels_order" and value is not None:
@@ -208,35 +194,10 @@ class RecToolsDIRCuPy(RecToolsDIR):
                 else:
                     filter_type = value
             if key == "chunk_count" and value is not None:
-                if value is not int or value <= 0:
+                if not isinstance(value, int) or value <= 0:
                     print(f"Invalid chunk count: {value}. Set to 1")
                 else:
                     chunk_count = value
-            if key == "slice_count_per_chunk" and value is not None:
-                if slice_count_per_chunk is not int or value <= 0:
-                    print(
-                        f"Invalid slice count: {value}. Set to slice count of input data"
-                    )
-                else:
-                    slice_count_per_chunk = value
-
-        projection_angles = -self.Atools.angles_vec
-        projection_angle_epsilon = np.pi * 0.001
-        if not (
-            all(
-                (-np.pi - projection_angle_epsilon)
-                <= x
-                <= (0 + projection_angle_epsilon)
-                for x in projection_angles
-            )
-            or all(
-                (0 - projection_angle_epsilon)
-                <= x
-                <= (np.pi + projection_angle_epsilon)
-                for x in projection_angles
-            )
-        ):
-            raise ValueError("Projection angles not in the [-PI, 0] or [0, PI] range")
 
         # extract kernels from CUDA modules
         module = load_cuda_module("fft_us_kernels")
@@ -247,6 +208,10 @@ class RecToolsDIRCuPy(RecToolsDIR):
         )
         gather_kernel_center = module.get_function("gather_kernel_center")
         wrap_kernel = module.get_function("wrap_kernel")
+        r2c_c1dfftshift = module.get_function("r2c_c1dfftshift")
+        c1dfftshift = module.get_function("c1dfftshift")
+        c2dfftshift = module.get_function("c2dfftshift")
+        unpadding_mul_phi = module.get_function("unpadding_mul_phi")
 
         # initialisation
         [nz, nproj, n] = data.shape
@@ -257,30 +222,33 @@ class RecToolsDIRCuPy(RecToolsDIR):
                     recon_size, n
                 )
             )
-        odd_horiz = False
-        if (n % 2) != 0:
-            n = n - 1  # dealing with the odd horizontal detector size
-            odd_horiz = True
-        odd_vert = False
-        if (nz % 2) != 0:
-            # the vertical dimension must be also even, so we need to extend the array. Not efficient.
-            data_p = xp.empty((nz + 1, nproj, n), dtype=xp.float32)
-            if odd_horiz:
-                data_p[:nz, :, :] = data[:, :, :-1]
-            else:
-                data_p[:nz, :, :] = data
+
+        odd_horiz = bool(n % 2)
+        odd_vert = bool(nz % 2)
+
+        n += odd_horiz
+        nz += odd_vert
+
+        if odd_horiz or odd_vert:
+            data_p = xp.empty((nz, nproj, n), dtype=xp.float32)
+            data_p[: nz - odd_vert, :, : n - odd_horiz] = data
+            data_p[: nz - odd_vert, :, -odd_horiz] = data[..., -odd_horiz]
             data = data_p
-            nz += 1
-            odd_vert = True
             del data_p
 
-        if not slice_count_per_chunk:
-            slice_count_per_chunk = nz
-
         rotation_axis = self.Atools.centre_of_rotation + 0.5
-        if odd_horiz:
-            rotation_axis -= 1
-        theta = xp.array(projection_angles, dtype=xp.float32)
+        theta = xp.array(-self.Atools.angles_vec, dtype=xp.float32)
+        if center_size >= _CENTER_SIZE_MIN:
+            sorted_theta_indices = xp.argsort(theta)
+            sorted_theta = theta[sorted_theta_indices]
+            sorted_theta_cpu = sorted_theta.get()
+
+            theta_full_range = abs(sorted_theta_cpu[nproj - 1] - sorted_theta_cpu[0])
+            angle_range_pi_count = 1 + int(np.ceil(theta_full_range / math.pi))
+            angle_range = xp.zeros(
+                [center_size, center_size, 1 + angle_range_pi_count * 2],
+                dtype=xp.uint16,
+            )
 
         # usfft parameters
         eps = 1e-4  # accuracy of usfft
@@ -295,38 +263,10 @@ class RecToolsDIRCuPy(RecToolsDIR):
         # Limit the center size parameter
         center_size = min(center_size, n * 2 + m * 2)
 
-        # memory for recon
-        if odd_horiz:
-            recon_up = xp.empty([nz, n + 1, n + 1], dtype=xp.float32)
-        else:
-            recon_up = xp.empty([nz, n, n], dtype=xp.float32)
-
-        # extra arrays
-        # interpolation kernel
-        t = xp.linspace(-1 / 2, 1 / 2, n, endpoint=False, dtype=xp.float32)
-        [dx, dy] = xp.meshgrid(t, t)
-        phi = xp.exp(mu * (n * n) * (dx * dx + dy * dy)) * ((1 - n % 4) / nproj)
-
-        # Memory clean up of interpolation extra arrays
-        del t, dx, dy
-
-        if center_size > 0:
-            angle_range = xp.empty([center_size, center_size, 3], dtype=xp.int32)
-
-        # (+1,-1) arrays for fftshift
-        c1dfftshift = xp.empty(n, dtype=xp.int8)
-        c1dfftshift[::2] = -1
-        c1dfftshift[1::2] = 1
-        c2dfftshift = xp.empty((2 * n, 2 * n), dtype=xp.int8)
-        c2dfftshift[0::2, 1::2] = -1
-        c2dfftshift[1::2, 0::2] = -1
-        c2dfftshift[0::2, 0::2] = 1
-        c2dfftshift[1::2, 1::2] = 1
-
         # init filter
         ne = oversampling_level * n
         padding_m = ne // 2 - n // 2
-        padding_p = ne // 2 + (n + n % 2) // 2
+        padding_p = ne // 2 + n // 2
         wfilter = calc_filter(ne, filter_type, cutoff_freq)
 
         # STEP0: FBP filtering
@@ -336,37 +276,61 @@ class RecToolsDIRCuPy(RecToolsDIR):
         # FBP filtering output
         tmp_p = xp.empty(data.shape, dtype=xp.float32)
 
-        # print(data.shape[2] + padding_m * 2)
-        # print(xp.float32().itemsize)
-        # print(chunk_count)
-
+        slice_count_per_chunk = np.ceil(nz / chunk_count)
         # Loop over the chunks
         for chunk_index in range(0, chunk_count):
-            start_index = chunk_index * slice_count_per_chunk
+            start_index = min(chunk_index * slice_count_per_chunk, nz)
             end_index = min((chunk_index + 1) * slice_count_per_chunk, nz)
+            if start_index >= end_index:
+                break
+
             tmp = xp.pad(
                 data[start_index:end_index, :, :],
                 ((0, 0), (0, 0), (padding_m, padding_m)),
                 mode="edge",
             )
-            tmp = irfft(w * rfft(tmp, axis=2), axis=2)
+
+            tmp = w * rfft(tmp, axis=2)
+            tmp = irfft(tmp, axis=2)
             tmp_p[start_index:end_index, :, :] = tmp[:, :, padding_m:padding_p]
+
             del tmp
 
-        # BACKPROJECTION
-        # !work with complex numbers by setting a half of the array as real and another half as imag
-        datac = tmp_p[: nz // 2] + 1j * tmp_p[nz // 2 :]
-        # can be done without introducing array datac, saves memory, see tomocupy (TODO)
+        # Memory clean up of filter and input data
+        del data, t, wfilter, w
 
-        # Memory clean up of interpolation extra arrays
-        del tmp_p, t, wfilter, w
-        xp._default_memory_pool.free_all_blocks()
+        # BACKPROJECTION
+        # input data
+        datac = xp.empty((nz // 2, nproj, n), dtype=xp.complex64)
 
         # padded fft, reusable by chunks
-        fde = xp.zeros([nz // 2, 2 * m + 2 * n, 2 * m + 2 * n], dtype=xp.complex64)
+        fde = xp.empty([nz // 2, 2 * m + 2 * n, 2 * m + 2 * n], dtype=xp.complex64)
 
         # STEP1: fft 1d
-        datac = fft(c1dfftshift * datac) * c1dfftshift * (4 / n)
+        r2c_c1dfftshift(
+            (
+                int(np.ceil(n / 32)),
+                int(np.ceil(nproj / 32)),
+                np.int32(nz // 2),
+            ),
+            (32, 32, 1),
+            (tmp_p, datac, n, nproj, nz // 2),
+        )
+
+        # Memory clean up of interpolation extra arrays
+        del tmp_p
+
+        datac = fft(datac)
+
+        c1dfftshift(
+            (
+                int(np.ceil(n / 32)),
+                int(np.ceil(nproj / 32)),
+                np.int32(nz // 2),
+            ),
+            (32, 32, 1),
+            (datac, np.float32(4 / n), n, nproj, nz // 2),
+        )
 
         # STEP2: interpolation (gathering) in the frequency domain
         # Use original one kernel at low dimension.
@@ -374,8 +338,8 @@ class RecToolsDIRCuPy(RecToolsDIR):
             if center_size != (n * 2 + m * 2):
                 gather_kernel_partial(
                     (
-                        int(xp.ceil(n / block_dim[0])),
-                        int(xp.ceil(nproj / block_dim[1])),
+                        int(np.ceil(n / block_dim[0])),
+                        int(np.ceil(nproj / block_dim[1])),
                         nz // 2,
                     ),
                     (block_dim[0], block_dim[1], 1),
@@ -392,14 +356,12 @@ class RecToolsDIRCuPy(RecToolsDIR):
                     ),
                 )
 
-            sorted_theta_indices = xp.argsort(theta)
-            sorted_theta = theta[sorted_theta_indices]
-
             gather_kernel_center_angle_based_prune(
                 (int(np.ceil(center_size / 256)), center_size, 1),
                 (256, 1, 1),
                 (
                     angle_range,
+                    angle_range_pi_count * 2 + 1,
                     sorted_theta,
                     np.int32(m),
                     np.int32(center_size),
@@ -410,8 +372,8 @@ class RecToolsDIRCuPy(RecToolsDIR):
 
             gather_kernel_center(
                 (
-                    int(xp.ceil(center_size / block_dim_center[0])),
-                    int(xp.ceil(center_size / block_dim_center[1])),
+                    int(np.ceil(center_size / block_dim_center[0])),
+                    int(np.ceil(center_size / block_dim_center[1])),
                     nz // 2,
                 ),
                 (block_dim_center[0], block_dim_center[1], 1),
@@ -419,6 +381,7 @@ class RecToolsDIRCuPy(RecToolsDIR):
                     datac,
                     fde,
                     angle_range,
+                    angle_range_pi_count * 2 + 1,
                     theta,
                     sorted_theta_indices,
                     np.int32(m),
@@ -429,12 +392,11 @@ class RecToolsDIRCuPy(RecToolsDIR):
                     np.int32(nz // 2),
                 ),
             )
-
         else:
             gather_kernel(
                 (
-                    int(xp.ceil(n / block_dim[0])),
-                    int(xp.ceil(nproj / block_dim[1])),
+                    int(np.ceil(n / block_dim[0])),
+                    int(np.ceil(nproj / block_dim[1])),
                     nz // 2,
                 ),
                 (block_dim[0], block_dim[1], 1),
@@ -460,47 +422,80 @@ class RecToolsDIRCuPy(RecToolsDIR):
             (fde, n, nz // 2, m),
         )
 
-        if center_size > 0:
-            del angle_range, c1dfftshift, datac
-        else:
-            del datac, c1dfftshift
-        xp._default_memory_pool.free_all_blocks()
+        del datac
 
         # STEP3: ifft 2d
-        # can be done without introducing array fde2, saves memory, see tomocupy (TODO)
-        fde2 = fde[:, m:-m, m:-m]
+        c2dfftshift(
+            (
+                int(np.ceil((2 * n + 2 * m) / 32)),
+                int(np.ceil((2 * n + 2 * m) / 8)),
+                np.int32(nz // 2),
+            ),
+            (32, 8, 1),
+            (fde, n, nz // 2, m),
+        )
 
-        # Delete fde array
+        slice_count_per_chunk = np.ceil(nz // 2 / chunk_count)
+        # Loop over the chunks
+        for chunk_index in range(0, chunk_count):
+            start_index = min(chunk_index * slice_count_per_chunk, nz // 2)
+            end_index = min((chunk_index + 1) * slice_count_per_chunk, nz // 2)
+            if start_index >= end_index:
+                break
+
+            tmp = fde[start_index:end_index, :, :]
+            tmp = ifft2(tmp, axes=(-2, -1), overwrite_x=True)
+            fde[start_index:end_index, :, :] = tmp
+
+            del tmp
+
+        c2dfftshift(
+            (
+                int(np.ceil((2 * n + 2 * m) / 32)),
+                int(np.ceil((2 * n + 2 * m) / 8)),
+                np.int32(nz // 2),
+            ),
+            (32, 8, 1),
+            (fde, n, nz // 2, m),
+        )
+
+        # Unpadded recon output size
+        odd_recon_size = bool(recon_size % 2)
+        unpad_z = nz - odd_vert
+        unpad_recon_m = (n - odd_horiz) // 2 - recon_size // 2
+        unpad_recon_p = (n - odd_horiz) // 2 + (recon_size + odd_recon_size) // 2
+        unpad_recon_size = unpad_recon_p - unpad_recon_m
+
+        # memory for recon
+        recon_up = xp.empty(
+            [unpad_z, unpad_recon_size, unpad_recon_size], dtype=xp.float32
+        )
+
+        # STEP4: unpadding, multiplication by phi and restructure memory
+        unpadding_mul_phi(
+            (
+                int(np.ceil(unpad_recon_size / 32)),
+                int(np.ceil(unpad_recon_size / 32)),
+                np.int32(nz // 2),
+            ),
+            (32, 32, 1),
+            (
+                recon_up,
+                fde,
+                np.float32(mu),
+                nproj,
+                unpad_recon_p,
+                unpad_z,
+                unpad_recon_m,
+                n,
+                nz // 2,
+                m,
+            ),
+        )
+
         del fde
 
-        fde2 = cupyx.scipy.fft.ifft2(
-            fde2 * c2dfftshift, axes=(-2, -1), overwrite_x=True
-        )
-        fde2 *= c2dfftshift
-
-        # STEP4: unpadding, multiplication by phi
-        fde2 = fde2[:, n // 2 : 3 * n // 2, n // 2 : 3 * n // 2] * phi
-
-        # restructure memory
-        if odd_horiz:
-            recon_up[:, :-1, :-1] = xp.concatenate((fde2.real, fde2.imag))
-        else:
-            recon_up[:] = xp.concatenate((fde2.real, fde2.imag))
-
-        del fde2, c2dfftshift
-        xp._default_memory_pool.free_all_blocks()
-        if odd_vert:
-            unpad_z = nz - 1
-        else:
-            unpad_z = nz
-
-        unpad_recon_m = n // 2 - recon_size // 2
-        unpad_recon_p = n // 2 + (recon_size + recon_size % 2) // 2
         return check_kwargs(
-            recon_up[
-                0:unpad_z,
-                unpad_recon_m:unpad_recon_p,
-                unpad_recon_m:unpad_recon_p,
-            ],
+            recon_up,
             **kwargs,
         )
