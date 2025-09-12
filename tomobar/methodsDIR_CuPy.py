@@ -145,7 +145,7 @@ class RecToolsDIRCuPy(RecToolsDIR):
         reconstruction = self.Atools._backprojCuPy(data)  # 3d backprojecting
         return check_kwargs(reconstruction, **kwargs)
 
-    def FOURIER_INV(self, data: xp.ndarray, **kwargs) -> xp.ndarray:
+    def FOURIER_INV(self, data: xp.ndarray, **kwargs):
         """Fourier direct inversion in 3D on unequally spaced (also called as NonUniform FFT/NUFFT) grids using CuPy array as an input.
         This implementation follows V. Nikitin's CUDA-C implementation:
         https://github.com/nikitinvv/radonusfft and TomoCuPy package.
@@ -164,6 +164,7 @@ class RecToolsDIRCuPy(RecToolsDIR):
         Returns:
             xp.ndarray: The NUFFT reconstructed volume as a CuPy array.
         """
+        result = {}
         cupyrun = True
         kwargs.update({"cupyrun": cupyrun})  # needed for agnostic array cropping
         cutoff_freq = 1.0  # default value
@@ -314,6 +315,8 @@ class RecToolsDIRCuPy(RecToolsDIR):
 
             del tmp
 
+        result["final_tmp_p"] = tmp_p
+
         # Memory clean up of filter and input data
         del data, t, wfilter, w
 
@@ -338,10 +341,14 @@ class RecToolsDIRCuPy(RecToolsDIR):
             (tmp_p, datac, n, nproj, nz // 2),
         )
 
+        result["r2c_c1dfftshift_output"] = datac.copy()
+
         # Memory clean up of interpolation extra arrays
         del tmp_p
 
         datac = fft(datac)
+
+        result["fft_datac_output"] = datac.copy()
 
         c1dfftshift(
             (
@@ -352,6 +359,8 @@ class RecToolsDIRCuPy(RecToolsDIR):
             (32, 32, 1),
             (datac, np.float32(4 / n), n, nproj, nz // 2),
         )
+
+        result["final_datac"] = datac
 
         # STEP2: interpolation (gathering) in the frequency domain
         # Use original one kernel at low dimension.
@@ -471,6 +480,8 @@ class RecToolsDIRCuPy(RecToolsDIR):
             (fde, n, nz // 2),
         )
 
+        result["final_fde"] = fde
+
         # Unpadded recon output size
         odd_recon_size = bool(recon_size % 2)
         unpad_z = nz - odd_vert
@@ -504,9 +515,14 @@ class RecToolsDIRCuPy(RecToolsDIR):
             ),
         )
 
+        result["unpadded_recon_up"] = recon_up
+
         del fde
 
-        return check_kwargs(
+        recon_up = check_kwargs(
             recon_up,
             **kwargs,
         )
+
+        result["recon_vol_block_size"] = recon_up
+        return result
