@@ -255,7 +255,13 @@ def PD_TV_cupy(
     input_index = 0
     output_index = 1
 
-    for _ in range(iterations):
+    capturing_stream = cp.cuda.Stream()
+    capturing_stream.begin_capture()
+
+    batch = 2
+    assert(iterations % batch == 0)
+    assert(batch % 2 == 0)
+    for _ in range(batch):
         if data.ndim == 2:
             params = (
                 data,
@@ -289,9 +295,14 @@ def PD_TV_cupy(
                 *data_dims,
             )
 
-        primal_dual_for_total_variation(grid_dims, block_dims, params)
+        primal_dual_for_total_variation(grid_dims, block_dims, params, stream=capturing_stream)
 
         input_index = 1 - input_index
         output_index = 1 - output_index
+
+    graph = capturing_stream.end_capture()
+
+    for _ in range(iterations // batch):
+        graph.launch()
 
     return U_arrays[input_index]
