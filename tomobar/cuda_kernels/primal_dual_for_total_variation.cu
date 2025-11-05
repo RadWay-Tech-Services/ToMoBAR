@@ -122,8 +122,8 @@ __device__ float DivProj3D(float Input, float U_in, float P1, float P2, float P3
   return (U_in - tau * div_var + lt * Input) / (1.0f + lt);
 }
 
-template <typename T, bool nonneg, bool methodTV>
-__global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, float *U_out, T *P1_in, T *P2_in, T *P3_in, T *P1_out, T *P2_out, T *P3_out, float sigma, float tau, float lt, float theta, int dimX, int dimY, int dimZ)
+template <typename T, typename InT, typename OutT, bool nonneg, bool methodTV>
+__global__ void primal_dual_for_total_variation_3D(float *Input, InT *U_in, OutT *U_out, T *P1_in, T *P2_in, T *P3_in, T *P1_out, T *P2_out, T *P3_out, float sigma, float tau, float lt, float theta, int dimX, int dimY, int dimZ)
 {
   // calculate each thread global index
   const long xIndex = blockIdx.x * blockDim.x + threadIdx.x;
@@ -166,7 +166,7 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
   float P1 = read_as_float<T>(P1_in, index);
   float P2 = read_as_float<T>(P2_in, index);
   float P3 = read_as_float<T>(P3_in, index);
-  float U = U_in[index];
+  float U = read_as_float<InT>(U_in, index);
   float Input_value = Input[index];
 
   if (xIndex > 0)
@@ -174,7 +174,7 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
     P1_prev_x = read_as_float<T>(P1_in, index_prev_x);
     P2_prev_x = read_as_float<T>(P2_in, index_prev_x);
     P3_prev_x = read_as_float<T>(P3_in, index_prev_x);
-    U_prev_x = U_in[index_prev_x];
+    U_prev_x = read_as_float<InT>(U_in, index_prev_x);
   }
 
   if (yIndex > 0)
@@ -182,7 +182,7 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
     P1_prev_y = read_as_float<T>(P1_in, index_prev_y);
     P2_prev_y = read_as_float<T>(P2_in, index_prev_y);
     P3_prev_y = read_as_float<T>(P3_in, index_prev_y);
-    U_prev_y = U_in[index_prev_y];
+    U_prev_y = read_as_float<InT>(U_in, index_prev_y);
   }
 
   if (zIndex > 0)
@@ -190,7 +190,7 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
     P1_prev_z = read_as_float<T>(P1_in, index_prev_z);
     P2_prev_z = read_as_float<T>(P2_in, index_prev_z);
     P3_prev_z = read_as_float<T>(P3_in, index_prev_z);
-    U_prev_z = U_in[index_prev_z];
+    U_prev_z = read_as_float<InT>(U_in, index_prev_z);
   }
 
   bool last_x = xIndex == dimX - 1;
@@ -199,25 +199,25 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
 
   if (((xIndex > 0) && last_y) || ((yIndex > 0) && last_x))
   {
-    U_prev_x_prev_y = U_in[index - xStride - yStride];
+    U_prev_x_prev_y = read_as_float<InT>(U_in, index - xStride - yStride);
   }
 
   if (((xIndex > 0) && last_z) || ((zIndex > 0) && last_x))
   {
-    U_prev_x_prev_z = U_in[index - xStride - zStride];
+    U_prev_x_prev_z = read_as_float<InT>(U_in, index - xStride - zStride);
   }
 
   if (((yIndex > 0) && last_z) || ((zIndex > 0) && last_y))
   {
-    U_prev_y_prev_z = U_in[index - yStride - zStride];
+    U_prev_y_prev_z = read_as_float<InT>(U_in, index - yStride - zStride);
   }
 
   {
     float U_values[4] = {
         U,
-        last_x ? U_prev_x : U_in[index + xStride],
-        last_y ? U_prev_y : U_in[index + yStride],
-        last_z ? U_prev_z : U_in[index + zStride]};
+        last_x ? U_prev_x : read_as_float<InT>(U_in, index + xStride),
+        last_y ? U_prev_y : read_as_float<InT>(U_in, index + yStride),
+        last_z ? U_prev_z : read_as_float<InT>(U_in, index + zStride)};
     dualPD3D<methodTV>(U_values, &P1, &P2, &P3, sigma);
   }
 
@@ -226,8 +226,8 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
     float U_values[4] = {
         U_prev_x,
         U,
-        last_y ? U_prev_x_prev_y : U_in[index - xStride + yStride],
-        last_z ? U_prev_x_prev_z : U_in[index - xStride + zStride]};
+        last_y ? U_prev_x_prev_y : read_as_float<InT>(U_in, index - xStride + yStride),
+        last_z ? U_prev_x_prev_z : read_as_float<InT>(U_in, index - xStride + zStride)};
     dualPD3D<methodTV>(U_values, &P1_prev_x, &P2_prev_x, &P3_prev_x, sigma);
   }
 
@@ -235,9 +235,9 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
   {
     float U_values[4] = {
         U_prev_y,
-        last_x ? U_prev_x_prev_y : U_in[index + xStride - yStride],
+        last_x ? U_prev_x_prev_y : read_as_float<InT>(U_in, index + xStride - yStride),
         U,
-        last_z ? U_prev_y_prev_z : U_in[index - yStride + zStride]};
+        last_z ? U_prev_y_prev_z : read_as_float<InT>(U_in, index - yStride + zStride)};
     dualPD3D<methodTV>(U_values, &P1_prev_y, &P2_prev_y, &P3_prev_y, sigma);
   }
 
@@ -245,15 +245,15 @@ __global__ void primal_dual_for_total_variation_3D(float *Input, float *U_in, fl
   {
     float U_values[4] = {
         U_prev_z,
-        last_x ? U_prev_x_prev_z : U_in[index + xStride - zStride],
-        last_y ? U_prev_y_prev_z : U_in[index + yStride - zStride],
+        last_x ? U_prev_x_prev_z : read_as_float<InT>(U_in, index + xStride - zStride),
+        last_y ? U_prev_y_prev_z : read_as_float<InT>(U_in, index + yStride - zStride),
         U};
     dualPD3D<methodTV>(U_values, &P1_prev_z, &P2_prev_z, &P3_prev_z, sigma);
   }
 
   U = clamp_to_zero<nonneg>(U);
   float new_U = DivProj3D(Input_value, U, P1, P2, P3, P1_prev_x, P2_prev_y, P3_prev_z, tau, lt);
-  U_out[index] = new_U + theta * (new_U - U);
+  write_float<OutT>(U_out, index, new_U + theta * (new_U - U));
 
   write_float<T>(P1_out, index, P1);
   write_float<T>(P2_out, index, P2);

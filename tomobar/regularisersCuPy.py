@@ -227,9 +227,11 @@ def PD_TV_cupy(
     methodTV_kernel_param = "true" if bool(methodTV) else "false"
     name_expressions = [
         f"primal_dual_for_total_variation_2D<{type_of_P}, {nonneg_kernel_param}, {methodTV_kernel_param}>",
-        f"primal_dual_for_total_variation_3D<{type_of_P}, {nonneg_kernel_param}, {methodTV_kernel_param}>",
+        f"primal_dual_for_total_variation_3D<{type_of_P}, __half, __half, {nonneg_kernel_param}, {methodTV_kernel_param}>",
+        f"primal_dual_for_total_variation_3D<{type_of_P}, float, __half, {nonneg_kernel_param}, {methodTV_kernel_param}>",
+        f"primal_dual_for_total_variation_3D<{type_of_P}, __half, float, {nonneg_kernel_param}, {methodTV_kernel_param}>",
     ]
-    module = load_cuda_module("primal_dual_for_total_variation", name_expressions)
+    module = load_cuda_module("primal_dual_for_total_variation", name_expressions, ('--generate-line-info',))
 
     (dz, dy, dx) = data.shape + (0,) * (3 - data.ndim)
     block_x = 128
@@ -250,12 +252,14 @@ def PD_TV_cupy(
         data_dims = data_dims + (dz,)
 
         primal_dual_for_total_variation = module.get_function(name_expressions[1])
+        primal_dual_for_total_variation_first = module.get_function(name_expressions[2])
+        primal_dual_for_total_variation_last = module.get_function(name_expressions[3])
 
     # perform algorithm iterations
     input_index = 0
     output_index = 1
 
-    for _ in range(iterations):
+    for iter_idx in range(iterations):
         if data.ndim == 2:
             params = (
                 data,
@@ -289,7 +293,12 @@ def PD_TV_cupy(
                 *data_dims,
             )
 
-        primal_dual_for_total_variation(grid_dims, block_dims, params)
+        if iter_idx == 0:
+            primal_dual_for_total_variation_first(grid_dims, block_dims, params)
+        elif iter_idx == iterations - 1:
+            primal_dual_for_total_variation_last(grid_dims, block_dims, params)
+        else:
+            primal_dual_for_total_variation(grid_dims, block_dims, params)
 
         input_index = 1 - input_index
         output_index = 1 - output_index
