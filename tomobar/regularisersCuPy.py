@@ -258,7 +258,7 @@ def PD_TV_cupy(
     capturing_stream = cp.cuda.Stream()
     capturing_stream.begin_capture()
 
-    batch = 2
+    batch = iterations
     assert(iterations % batch == 0)
     assert(batch % 2 == 0)
     for _ in range(batch):
