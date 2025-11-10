@@ -229,15 +229,15 @@ def PD_TV_cupy(
         f"primal_dual_for_total_variation_2D<{type_of_P}, {nonneg_kernel_param}, {methodTV_kernel_param}>",
         f"primal_dual_for_total_variation_3D<{type_of_P}, {nonneg_kernel_param}, {methodTV_kernel_param}>",
     ]
-    module = load_cuda_module("primal_dual_for_total_variation", name_expressions)
+    module = load_cuda_module("primal_dual_for_total_variation", name_expressions, ("--generate-line-info",))
 
     (dz, dy, dx) = data.shape + (0,) * (3 - data.ndim)
-    block_x = 128
-    block_dims = (block_x, 1)
-    grid_x = (dx + block_x - 1) // block_x
-    grid_y = dy
-    grid_dims = (grid_x, grid_y)
-    data_dims = (dx, dy)
+    block_dims = (8, 8, 4)
+    grid_x = (dx + block_dims[0] - 1) // block_dims[0]
+    grid_y = (dy + block_dims[1] - 1) // block_dims[1]
+    grid_z = (dz + block_dims[2] - 1) // block_dims[2]
+    grid_dims = (grid_x, grid_y, grid_z)
+    data_dims = (dx, dy, dz)
 
     if data.ndim == 2:
         primal_dual_for_total_variation = module.get_function(name_expressions[0])
@@ -245,9 +245,9 @@ def PD_TV_cupy(
         P3_arrays = [
             cp.zeros(data.shape, dtype=dtype_of_P, order="C") for _ in range(2)
         ]
-        block_dims = block_dims + (1,)
-        grid_dims = grid_dims + (dz,)
-        data_dims = data_dims + (dz,)
+        # block_dims = block_dims + (1,)
+        # grid_dims = grid_dims + (dz,)
+        # data_dims = data_dims + (dz,)
 
         primal_dual_for_total_variation = module.get_function(name_expressions[1])
 
@@ -256,6 +256,7 @@ def PD_TV_cupy(
     output_index = 1
 
     for _ in range(iterations):
+        shared_mem_bytes = 0
         if data.ndim == 2:
             params = (
                 data,
@@ -272,6 +273,8 @@ def PD_TV_cupy(
                 *data_dims,
             )
         elif data.ndim == 3:
+            padding = 2
+            shared_mem_bytes = 4 * (block_dims[0] + padding) * (block_dims[1] + padding) * (block_dims[2] + padding)
             params = (
                 data,
                 U_arrays[input_index],
@@ -289,7 +292,7 @@ def PD_TV_cupy(
                 *data_dims,
             )
 
-        primal_dual_for_total_variation(grid_dims, block_dims, params)
+        primal_dual_for_total_variation(grid_dims, block_dims, params, shared_mem=shared_mem_bytes)
 
         input_index = 1 - input_index
         output_index = 1 - output_index
