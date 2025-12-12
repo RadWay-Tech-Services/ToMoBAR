@@ -67,7 +67,7 @@ def main(args: argparse.Namespace):
         return
 
     chunk_size = available_memory_bytes // slice_memory_bytes
-    chunk_count = int(np.ceil(args.sinogram_shape[0] / chunk_size))
+    chunk_count = int(np.ceil(Vert_det / chunk_size))
     print(f"Creating phantom in {chunk_count} number of chunks of at max {chunk_size} slices per chunk.")
 
     with h5py.File(args.output_path, "w") as file:
