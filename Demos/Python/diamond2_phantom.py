@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import argparse
 import pathlib
+import psutil
 import numpy as np
 import tomophantom
 
@@ -46,23 +47,28 @@ def save_nxs(
 
 
 def main(args: argparse.Namespace):
-    print("Building 3D phantom using TomoPhantom software")
     model = args.model_number
     path = pathlib.Path(tomophantom.__file__).parent
     path_library3D = str(path / "phantomlib" / "Phantom3DLibrary.dat")
 
-    N_size = args.phantom_size
-    chunk_size = 10
-    chunk_count = int(np.ceil(N_size / chunk_size))
-
-    # Projection geometry related parameters:
-    Horiz_det = int(np.sqrt(2) * N_size)  # detector column count (horizontal)
-    Vert_det = N_size  # detector row count (vertical) (no reason for it to be > N)
-    angles_num = int(0.3 * np.pi * N_size)  # angles number
+    Horiz_det = args.sinogram_shape[2]
+    Vert_det = args.sinogram_shape[0]
+    angles_num = args.sinogram_shape[1]
     global_shape = (angles_num, Vert_det, Horiz_det)
+    square_phantom_slice_width = int(Horiz_det / np.sqrt(2))
 
     angles = np.linspace(*args.angle_range, angles_num, dtype="float32")  # in degrees
     aux_data = AuxiliaryData(angles=angles)
+
+    available_memory_bytes = psutil.virtual_memory().available
+    slice_memory_bytes = Horiz_det * angles_num * np.float32().itemsize
+    if slice_memory_bytes > available_memory_bytes:
+        print(f"A signle slice ({slice_memory_bytes} bytes) is would be bigger than available memory ({available_memory_bytes} bytes).")
+        return
+
+    chunk_size = available_memory_bytes // slice_memory_bytes
+    chunk_count = int(np.ceil(args.sinogram_shape[0] / chunk_size))
+    print(f"Creating phantom in {chunk_count} number of chunks of at max {chunk_size} slices per chunk.")
 
     with h5py.File(args.output_path, "w") as file:
         file.attrs["default"] = "entry"
@@ -83,11 +89,11 @@ def main(args: argparse.Namespace):
 
     for i in range(chunk_count):
         chunk_start = i * chunk_size
-        chunk_end = min((i + 1) * chunk_size, N_size)
+        chunk_end = min((i + 1) * chunk_size, Vert_det)
 
         projData3D_analyt = tomophantom.TomoP3D.ModelSinoSub(
             model,
-            N_size,
+            square_phantom_slice_width,
             Horiz_det,
             Vert_det,
             (chunk_start, chunk_end),
@@ -124,14 +130,11 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "-s",
-        "--phantom-size",
-        type=int,
-        default=256,
-        # 2048  # Define phantom dimensions using a scalar value (cubic phantom) -- Limit for machines with 32 GB RAM
-        # 4096  # Define phantom dimensions using a scalar value (cubic phantom) -- Diamond2 resolution
-        # The biggest camera so far (that we are still commissioning) is 4416 x 2368, and if we use it in 2FOV mode that will be a uint16 4416 x 2368 x 3600.
-        # 4416 is the horizontal, 2368 is the vertical detector dimension.
-        help="Cubic phantom size.",
+        "--sinogram-shape",
+        nargs=3,
+        metavar=("detector height", "projection count", "detector width"),
+        type=float,
+        default=(2368, 256, 4416),
     )
     parser.add_argument(
         "-a",
