@@ -1,4 +1,8 @@
+#if defined(__HIPCC__)
+#include <hip_fp16.h>
+#else
 #include <cuda_fp16.h>
+#endif
 
 /*
 Raw CUDA Kernels for Rudin Osher Fatemi Total Variation regularisation model
