@@ -1,4 +1,5 @@
 #include <cuda_fp16.h>
+#include <cuda_bf16.h>
 
 /*
 Raw CUDA Kernels for Primal-Dual Total Variation regularisation model
@@ -33,6 +34,12 @@ __device__ float read_as_float<float>(float *P, long long index)
 }
 
 template <>
+__device__ float read_as_float<__nv_bfloat16>(__nv_bfloat16 *P, long long index)
+{
+  return __bfloat162float(P[index]);
+}
+
+template <>
 __device__ float read_as_float<__half>(__half *P, long long index)
 {
   return __half2float(P[index]);
@@ -47,6 +54,12 @@ template <>
 __device__ void write_float<float>(float *P, long long index, float value)
 {
   P[index] = value;
+}
+
+template <>
+__device__ void write_float<__nv_bfloat16>(__nv_bfloat16 *P, long long index, float value)
+{
+  P[index] = __float2bfloat16(value);
 }
 
 template <>

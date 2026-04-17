@@ -9,6 +9,7 @@ higher-order regularization of dynamic synchrotron data.
 Measurement Science and Technology, 28(9), p.094004.
 """
 import numpy as np
+import ml_dtypes
 # import matplotlib.pyplot as plt
 import scipy.io
 import cupy as cp
@@ -159,7 +160,9 @@ _regularisation_ = {
     "method": "PD_TV",  # Selected regularisation method
     "regul_param": 0.000002,  # Regularisation parameter
     "iterations": 50,  # The number of regularisation iterations
-    "half_precision": True,  # enabling half-precision calculation
+    # "intermediate_dtype": cp.float32,  # enabling half-precision calculation
+    # "intermediate_dtype": cp.float16,  # enabling half-precision calculation
+    "intermediate_dtype": ml_dtypes.bfloat16,  # enabling half-precision calculation
 }
 
 
